@@ -25,6 +25,7 @@ type Streamer struct {
 	p2p         P2PConfig
 
 	resourceCacheFactory db.ResourceCacheFactory
+	workerFactory        db.WorkerFactory
 }
 
 type P2PConfig struct {
@@ -32,9 +33,10 @@ type P2PConfig struct {
 	Timeout time.Duration
 }
 
-func NewStreamer(cacheFactory db.ResourceCacheFactory, compression compression.Compression, limitInMB float64, p2p P2PConfig) Streamer {
+func NewStreamer(cacheFactory db.ResourceCacheFactory, workerFactory db.WorkerFactory, compression compression.Compression, limitInMB float64, p2p P2PConfig) Streamer {
 	return Streamer{
 		resourceCacheFactory: cacheFactory,
+		workerFactory:        workerFactory,
 		compression:          compression,
 		limitInMB:            limitInMB,
 		p2p:                  p2p,
@@ -97,7 +99,7 @@ func (s Streamer) Stream(ctx context.Context, src runtime.Artifact, dst runtime.
 }
 
 func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.Volume) error {
-	if !s.p2p.Enabled {
+	if !s.p2p.Enabled || !s.sameP2PNetwork(src, dst) {
 		return s.streamThroughATC(ctx, src, dst)
 	}
 	p2pSrc, ok := src.(runtime.P2PVolume)
@@ -110,6 +112,26 @@ func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	}
 
 	return s.p2pStream(ctx, p2pSrc, p2pDst)
+}
+
+func (s Streamer) sameP2PNetwork(src runtime.Artifact, dst runtime.Volume) bool {
+	srcName := src.Source()
+	dstName := dst.DBVolume().WorkerName()
+
+	srcWorker, found, err := s.workerFactory.GetWorker(srcName)
+	if err != nil || !found {
+		return false
+	}
+
+	dstWorker, found, err := s.workerFactory.GetWorker(dstName)
+	if err != nil || !found {
+		return false
+	}
+
+	srcNet := srcWorker.BaggageclaimP2PNetwork()
+	dstNet := dstWorker.BaggageclaimP2PNetwork()
+
+	return srcNet == dstNet
 }
 
 func (s Streamer) streamThroughATC(ctx context.Context, src runtime.Artifact, dst runtime.Volume) error {

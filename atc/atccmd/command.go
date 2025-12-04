@@ -1280,8 +1280,9 @@ func (cmd *RunCommand) compression() compression.Compression {
 	}
 }
 
-func (cmd *RunCommand) streamer(cacheFactory db.ResourceCacheFactory) worker.Streamer {
+func (cmd *RunCommand) streamer(cacheFactory db.ResourceCacheFactory, workerFactory db.WorkerFactory) worker.Streamer {
 	return worker.NewStreamer(cacheFactory,
+		workerFactory,
 		cmd.compression(),
 		cmd.StreamingSizeLimitationInMB,
 		worker.P2PConfig{
@@ -1322,7 +1323,7 @@ func (cmd *RunCommand) constructPool(dbConn db.DbConn, lockFactory lock.LockFact
 			GardenRequestTimeout:              cmd.GardenRequestTimeout,
 			BaggageclaimResponseHeaderTimeout: cmd.BaggageclaimResponseHeaderTimeout,
 			HTTPRetryTimeout:                  5 * time.Minute,
-			Streamer:                          cmd.streamer(dbResourceCacheFactory),
+			Streamer:                          cmd.streamer(dbResourceCacheFactory, dbWorkerFactory),
 		},
 		db,
 		workerVersion,

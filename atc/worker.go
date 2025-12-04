@@ -11,6 +11,8 @@ type Worker struct {
 	GardenAddr      string `json:"addr"`
 	BaggageclaimURL string `json:"baggageclaim_url"`
 
+	BaggageclaimP2PNetwork string `json:"baggageclaim_p2p_network,omitempty"`
+
 	CertsPath *string `json:"certs_path,omitempty"`
 
 	HTTPProxyURL  string `json:"http_proxy_url,omitempty"`

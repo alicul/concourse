@@ -98,6 +98,8 @@ func (cmd *WorkerCommand) gardenServerRunner(logger lager.Logger) (atc.Worker, i
 		worker.CertsPath = &cmd.Certs.Dir
 	}
 
+	worker.BaggageclaimP2PNetwork = cmd.Baggageclaim.P2pNetwork
+
 	worker.ResourceTypes, err = cmd.loadResources(logger.Session("load-resources"))
 	if err != nil {
 		return atc.Worker{}, nil, err

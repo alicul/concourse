@@ -41,6 +41,7 @@ var workersQuery = psql.Select(`
 		w.addr,
 		w.state,
 		w.baggageclaim_url,
+		w.baggageclaim_p2p_network,
 		w.certs_path,
 		w.http_proxy_url,
 		w.https_proxy_url,
@@ -154,6 +155,7 @@ func scanWorker(worker *worker, row scannable) error {
 		addStr        sql.NullString
 		state         string
 		bcURLStr      sql.NullString
+		bcP2PNetwork  string
 		certsPathStr  sql.NullString
 		httpProxyURL  sql.NullString
 		httpsProxyURL sql.NullString
@@ -174,6 +176,7 @@ func scanWorker(worker *worker, row scannable) error {
 		&addStr,
 		&state,
 		&bcURLStr,
+		&bcP2PNetwork,
 		&certsPathStr,
 		&httpProxyURL,
 		&httpsProxyURL,
@@ -204,6 +207,8 @@ func scanWorker(worker *worker, row scannable) error {
 	if bcURLStr.Valid {
 		worker.baggageclaimURL = &bcURLStr.String
 	}
+
+	worker.baggageclaimP2PNetwork = bcP2PNetwork
 
 	if certsPathStr.Valid {
 		worker.certsPath = &certsPathStr.String
@@ -402,6 +407,7 @@ func saveWorker(tx Tx, atcWorker atc.Worker, teamID *int, ttl time.Duration, con
 		tags,
 		atcWorker.Platform,
 		atcWorker.BaggageclaimURL,
+		atcWorker.BaggageclaimP2PNetwork,
 		atcWorker.CertsPath,
 		atcWorker.HTTPProxyURL,
 		atcWorker.HTTPSProxyURL,
@@ -433,6 +439,7 @@ func saveWorker(tx Tx, atcWorker atc.Worker, teamID *int, ttl time.Duration, con
 			"tags",
 			"platform",
 			"baggageclaim_url",
+			"baggageclaim_p2p_network",
 			"certs_path",
 			"http_proxy_url",
 			"https_proxy_url",
@@ -458,6 +465,7 @@ func saveWorker(tx Tx, atcWorker atc.Worker, teamID *int, ttl time.Duration, con
 				tags = ?,
 				platform = ?,
 				baggageclaim_url = ?,
+				baggageclaim_p2p_network = ?,
 				certs_path = ?,
 				http_proxy_url = ?,
 				https_proxy_url = ?,
@@ -491,13 +499,14 @@ func saveWorker(tx Tx, atcWorker atc.Worker, teamID *int, ttl time.Duration, con
 	}
 
 	savedWorker := &worker{
-		name:             atcWorker.Name,
-		version:          workerVersion,
-		state:            workerState,
-		gardenAddr:       &atcWorker.GardenAddr,
-		baggageclaimURL:  &atcWorker.BaggageclaimURL,
-		certsPath:        atcWorker.CertsPath,
-		httpProxyURL:     atcWorker.HTTPProxyURL,
+		name:                   atcWorker.Name,
+		version:                workerVersion,
+		state:                  workerState,
+		gardenAddr:             &atcWorker.GardenAddr,
+		baggageclaimURL:        &atcWorker.BaggageclaimURL,
+		baggageclaimP2PNetwork: atcWorker.BaggageclaimP2PNetwork,
+		certsPath:              atcWorker.CertsPath,
+		httpProxyURL:           atcWorker.HTTPProxyURL,
 		httpsProxyURL:    atcWorker.HTTPSProxyURL,
 		noProxy:          atcWorker.NoProxy,
 		activeContainers: atcWorker.ActiveContainers,

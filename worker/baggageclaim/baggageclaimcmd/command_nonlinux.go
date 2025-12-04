@@ -29,6 +29,7 @@ type BaggageclaimCommand struct {
 
 	P2pInterfaceNamePattern string `long:"p2p-interface-name-pattern" default:"eth0" description:"Regular expression to match a network interface for p2p streaming"`
 	P2pInterfaceFamily      int    `long:"p2p-interface-family" default:"4" choice:"4" choice:"6" description:"4 for IPv4 and 6 for IPv6"`
+	P2pNetwork              string `long:"p2p-network" default:"" description:"Network name for p2p streaming"`
 
 	VolumesDir flag.Dir `long:"volumes" required:"true" description:"Directory in which to place volume data."`
 

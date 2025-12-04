@@ -36,6 +36,8 @@ func (cmd WorkerCommand) LessenRequirements(prefix string, command *flags.Comman
 func (cmd *WorkerCommand) gardenServerRunner(logger lager.Logger) (atc.Worker, ifrit.Runner, error) {
 	worker := cmd.Worker.Worker()
 	worker.Platform = runtime.GOOS
+	worker.BaggageclaimP2PNetwork = cmd.Baggageclaim.P2pNetwork
+
 	var err error
 	worker.Name, err = cmd.workerName()
 	if err != nil {

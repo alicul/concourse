@@ -56,6 +56,7 @@ type Worker interface {
 	State() WorkerState
 	GardenAddr() *string
 	BaggageclaimURL() *string
+	BaggageclaimP2PNetwork() string
 	CertsPath() *string
 	ResourceCerts() (*UsedWorkerResourceCerts, bool, error)
 	HTTPProxyURL() string
@@ -90,34 +91,36 @@ type Worker interface {
 type worker struct {
 	conn DbConn
 
-	name             string
-	version          *string
-	state            WorkerState
-	gardenAddr       *string
-	baggageclaimURL  *string
-	httpProxyURL     string
-	httpsProxyURL    string
-	noProxy          string
-	activeContainers int
-	activeVolumes    int
-	activeTasks      int
-	resourceTypes    []atc.WorkerResourceType
-	platform         string
-	tags             []string
-	teamID           int
-	teamName         string
-	startTime        time.Time
-	expiresAt        time.Time
-	certsPath        *string
-	ephemeral        bool
+	name                   string
+	version                *string
+	state                  WorkerState
+	gardenAddr             *string
+	baggageclaimURL        *string
+	baggageclaimP2PNetwork string
+	httpProxyURL           string
+	httpsProxyURL          string
+	noProxy                string
+	activeContainers       int
+	activeVolumes          int
+	activeTasks            int
+	resourceTypes          []atc.WorkerResourceType
+	platform               string
+	tags                   []string
+	teamID                 int
+	teamName               string
+	startTime              time.Time
+	expiresAt              time.Time
+	certsPath              *string
+	ephemeral              bool
 }
 
-func (worker *worker) Name() string             { return worker.name }
-func (worker *worker) Version() *string         { return worker.version }
-func (worker *worker) State() WorkerState       { return worker.state }
-func (worker *worker) GardenAddr() *string      { return worker.gardenAddr }
-func (worker *worker) CertsPath() *string       { return worker.certsPath }
-func (worker *worker) BaggageclaimURL() *string { return worker.baggageclaimURL }
+func (worker *worker) Name() string                   { return worker.name }
+func (worker *worker) Version() *string               { return worker.version }
+func (worker *worker) State() WorkerState             { return worker.state }
+func (worker *worker) GardenAddr() *string            { return worker.gardenAddr }
+func (worker *worker) CertsPath() *string             { return worker.certsPath }
+func (worker *worker) BaggageclaimURL() *string       { return worker.baggageclaimURL }
+func (worker *worker) BaggageclaimP2PNetwork() string { return worker.baggageclaimP2PNetwork }
 
 func (worker *worker) HTTPProxyURL() string                    { return worker.httpProxyURL }
 func (worker *worker) HTTPSProxyURL() string                   { return worker.httpsProxyURL }

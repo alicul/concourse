@@ -42,6 +42,16 @@ type FakeWorker struct {
 	activeVolumesReturnsOnCall map[int]struct {
 		result1 int
 	}
+	BaggageclaimP2PNetworkStub        func() string
+	baggageclaimP2PNetworkMutex       sync.RWMutex
+	baggageclaimP2PNetworkArgsForCall []struct {
+	}
+	baggageclaimP2PNetworkReturns struct {
+		result1 string
+	}
+	baggageclaimP2PNetworkReturnsOnCall map[int]struct {
+		result1 string
+	}
 	BaggageclaimURLStub        func() *string
 	baggageclaimURLMutex       sync.RWMutex
 	baggageclaimURLArgsForCall []struct {
@@ -495,6 +505,59 @@ func (fake *FakeWorker) ActiveVolumesReturnsOnCall(i int, result1 int) {
 	}
 	fake.activeVolumesReturnsOnCall[i] = struct {
 		result1 int
+	}{result1}
+}
+
+func (fake *FakeWorker) BaggageclaimP2PNetwork() string {
+	fake.baggageclaimP2PNetworkMutex.Lock()
+	ret, specificReturn := fake.baggageclaimP2PNetworkReturnsOnCall[len(fake.baggageclaimP2PNetworkArgsForCall)]
+	fake.baggageclaimP2PNetworkArgsForCall = append(fake.baggageclaimP2PNetworkArgsForCall, struct {
+	}{})
+	stub := fake.BaggageclaimP2PNetworkStub
+	fakeReturns := fake.baggageclaimP2PNetworkReturns
+	fake.recordInvocation("BaggageclaimP2PNetwork", []interface{}{})
+	fake.baggageclaimP2PNetworkMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeWorker) BaggageclaimP2PNetworkCallCount() int {
+	fake.baggageclaimP2PNetworkMutex.RLock()
+	defer fake.baggageclaimP2PNetworkMutex.RUnlock()
+	return len(fake.baggageclaimP2PNetworkArgsForCall)
+}
+
+func (fake *FakeWorker) BaggageclaimP2PNetworkCalls(stub func() string) {
+	fake.baggageclaimP2PNetworkMutex.Lock()
+	defer fake.baggageclaimP2PNetworkMutex.Unlock()
+	fake.BaggageclaimP2PNetworkStub = stub
+}
+
+func (fake *FakeWorker) BaggageclaimP2PNetworkReturns(result1 string) {
+	fake.baggageclaimP2PNetworkMutex.Lock()
+	defer fake.baggageclaimP2PNetworkMutex.Unlock()
+	fake.BaggageclaimP2PNetworkStub = nil
+	fake.baggageclaimP2PNetworkReturns = struct {
+		result1 string
+	}{result1}
+}
+
+func (fake *FakeWorker) BaggageclaimP2PNetworkReturnsOnCall(i int, result1 string) {
+	fake.baggageclaimP2PNetworkMutex.Lock()
+	defer fake.baggageclaimP2PNetworkMutex.Unlock()
+	fake.BaggageclaimP2PNetworkStub = nil
+	if fake.baggageclaimP2PNetworkReturnsOnCall == nil {
+		fake.baggageclaimP2PNetworkReturnsOnCall = make(map[int]struct {
+			result1 string
+		})
+	}
+	fake.baggageclaimP2PNetworkReturnsOnCall[i] = struct {
+		result1 string
 	}{result1}
 }
 
