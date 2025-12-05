@@ -171,6 +171,7 @@ type CreatedVolume interface {
 	ResourceType() (*VolumeResourceType, error)
 	BaseResourceType() (*UsedWorkerBaseResourceType, error)
 	TaskIdentifier() (int, atc.PipelineRef, string, string, error)
+	ContainerMetadata() (ContainerMetadata, bool, error)
 }
 
 type createdVolume struct {
@@ -258,6 +259,29 @@ func (volume *createdVolume) TaskIdentifier() (int, atc.PipelineRef, string, str
 	}
 
 	return pipelineID, pipelineRef, jobName, stepName, nil
+}
+
+func (volume *createdVolume) ContainerMetadata() (ContainerMetadata, bool, error) {
+	if volume.containerHandle == "" {
+		return ContainerMetadata{}, false, nil
+	}
+
+	var metadata ContainerMetadata
+	err := psql.Select(containerMetadataColumns...).
+		From("containers").
+		Where(sq.Eq{"handle": volume.containerHandle}).
+		RunWith(volume.conn).
+		QueryRow().
+		Scan(metadata.ScanTargets()...)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ContainerMetadata{}, false, nil
+		}
+		return ContainerMetadata{}, false, err
+	}
+
+	return metadata, true, nil
 }
 
 func (volume *createdVolume) findVolumeResourceTypeByCacheID(resourceCacheID int) (*VolumeResourceType, error) {
