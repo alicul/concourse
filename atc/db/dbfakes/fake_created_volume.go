@@ -31,6 +31,20 @@ type FakeCreatedVolume struct {
 	containerHandleReturnsOnCall map[int]struct {
 		result1 string
 	}
+	ContainerMetadataStub        func() (db.ContainerMetadata, bool, error)
+	containerMetadataMutex       sync.RWMutex
+	containerMetadataArgsForCall []struct {
+	}
+	containerMetadataReturns struct {
+		result1 db.ContainerMetadata
+		result2 bool
+		result3 error
+	}
+	containerMetadataReturnsOnCall map[int]struct {
+		result1 db.ContainerMetadata
+		result2 bool
+		result3 error
+	}
 	CreateChildForContainerStub        func(db.CreatingContainer, string) (db.CreatingVolume, error)
 	createChildForContainerMutex       sync.RWMutex
 	createChildForContainerArgsForCall []struct {
@@ -342,6 +356,65 @@ func (fake *FakeCreatedVolume) ContainerHandleReturnsOnCall(i int, result1 strin
 	fake.containerHandleReturnsOnCall[i] = struct {
 		result1 string
 	}{result1}
+}
+
+func (fake *FakeCreatedVolume) ContainerMetadata() (db.ContainerMetadata, bool, error) {
+	fake.containerMetadataMutex.Lock()
+	ret, specificReturn := fake.containerMetadataReturnsOnCall[len(fake.containerMetadataArgsForCall)]
+	fake.containerMetadataArgsForCall = append(fake.containerMetadataArgsForCall, struct {
+	}{})
+	stub := fake.ContainerMetadataStub
+	fakeReturns := fake.containerMetadataReturns
+	fake.recordInvocation("ContainerMetadata", []interface{}{})
+	fake.containerMetadataMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *FakeCreatedVolume) ContainerMetadataCallCount() int {
+	fake.containerMetadataMutex.RLock()
+	defer fake.containerMetadataMutex.RUnlock()
+	return len(fake.containerMetadataArgsForCall)
+}
+
+func (fake *FakeCreatedVolume) ContainerMetadataCalls(stub func() (db.ContainerMetadata, bool, error)) {
+	fake.containerMetadataMutex.Lock()
+	defer fake.containerMetadataMutex.Unlock()
+	fake.ContainerMetadataStub = stub
+}
+
+func (fake *FakeCreatedVolume) ContainerMetadataReturns(result1 db.ContainerMetadata, result2 bool, result3 error) {
+	fake.containerMetadataMutex.Lock()
+	defer fake.containerMetadataMutex.Unlock()
+	fake.ContainerMetadataStub = nil
+	fake.containerMetadataReturns = struct {
+		result1 db.ContainerMetadata
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeCreatedVolume) ContainerMetadataReturnsOnCall(i int, result1 db.ContainerMetadata, result2 bool, result3 error) {
+	fake.containerMetadataMutex.Lock()
+	defer fake.containerMetadataMutex.Unlock()
+	fake.ContainerMetadataStub = nil
+	if fake.containerMetadataReturnsOnCall == nil {
+		fake.containerMetadataReturnsOnCall = make(map[int]struct {
+			result1 db.ContainerMetadata
+			result2 bool
+			result3 error
+		})
+	}
+	fake.containerMetadataReturnsOnCall[i] = struct {
+		result1 db.ContainerMetadata
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *FakeCreatedVolume) CreateChildForContainer(arg1 db.CreatingContainer, arg2 string) (db.CreatingVolume, error) {

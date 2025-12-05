@@ -52,7 +52,7 @@ func (s Streamer) Stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	logger.Info("start")
 	defer logger.Info("end")
 
-	err := s.stream(ctx, src, dst)
+	size, err := s.stream(ctx, src, dst)
 	if err != nil {
 		return err
 	}
@@ -63,6 +63,8 @@ func (s Streamer) Stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	}
 
 	metric.Metrics.VolumesStreamed.Inc()
+
+	s.emitVolumeStreamedMetric(logger, srcVolume, dst, size)
 
 	resourceCacheID := srcVolume.DBVolume().GetResourceCacheID()
 	if atc.EnableCacheStreamedVolumes && resourceCacheID != 0 {
@@ -96,7 +98,7 @@ func (s Streamer) Stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	return nil
 }
 
-func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.Volume) error {
+func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.Volume) (int64, error) {
 	if !s.p2p.Enabled {
 		return s.streamThroughATC(ctx, src, dst)
 	}
@@ -109,10 +111,11 @@ func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.
 		return s.streamThroughATC(ctx, src, dst)
 	}
 
-	return s.p2pStream(ctx, p2pSrc, p2pDst)
+	// For P2P stream, we don't have the size
+	return 0, s.p2pStream(ctx, p2pSrc, p2pDst)
 }
 
-func (s Streamer) streamThroughATC(ctx context.Context, src runtime.Artifact, dst runtime.Volume) error {
+func (s Streamer) streamThroughATC(ctx context.Context, src runtime.Artifact, dst runtime.Volume) (int64, error) {
 	traceAttrs := tracing.Attrs{
 		"dest-worker": dst.DBVolume().WorkerName(),
 	}
@@ -123,12 +126,18 @@ func (s Streamer) streamThroughATC(ctx context.Context, src runtime.Artifact, ds
 	out, err := src.StreamOut(ctx, ".", s.compression)
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	defer out.Close()
 
-	return dst.StreamIn(ctx, ".", s.compression, s.limitInMB, out)
+	countingReader := &countingReadCloser{ReadCloser: out}
+
+	err = dst.StreamIn(ctx, ".", s.compression, s.limitInMB, countingReader)
+	if err != nil {
+		return 0, err
+	}
+	return countingReader.count, nil
 }
 
 func (s Streamer) p2pStream(ctx context.Context, src runtime.P2PVolume, dst runtime.P2PVolume) error {
@@ -197,6 +206,31 @@ func (s Streamer) StreamFile(ctx context.Context, artifact runtime.Artifact, pat
 	}, nil
 }
 
+func (s Streamer) emitVolumeStreamedMetric(logger lager.Logger, src runtime.Volume, dst runtime.Volume, size int64) {
+	srcWorker := src.Source()
+	dstWorker := dst.DBVolume().WorkerName()
+
+	var meta db.ContainerMetadata
+	if createdVol, ok := dst.DBVolume().(db.CreatedVolume); ok {
+		m, found, err := createdVol.ContainerMetadata()
+		if err == nil && found {
+			meta = m
+		} else if err != nil {
+			logger.Error("failed-to-get-container-metadata", err)
+		}
+	}
+
+	metric.VolumeStreamed{
+		SourceWorker:      srcWorker,
+		DestinationWorker: dstWorker,
+		Size:              size,
+		StepType:          string(meta.Type),
+		StepName:          meta.StepName,
+		PipelineName:      meta.PipelineName,
+		JobName:           meta.JobName,
+	}.Emit(logger)
+}
+
 type fileReadMultiCloser struct {
 	io.Reader
 	closers []io.Closer
@@ -213,4 +247,15 @@ func (frc fileReadMultiCloser) Close() error {
 	}
 
 	return closeErrors
+}
+
+type countingReadCloser struct {
+	io.ReadCloser
+	count int64
+}
+
+func (r *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	r.count += int64(n)
+	return n, err
 }

@@ -645,3 +645,31 @@ func (event WorkersState) Emit(logger lager.Logger, m *Monitor) {
 		)
 	}
 }
+
+type VolumeStreamed struct {
+	SourceWorker      string
+	DestinationWorker string
+	Size              int64
+	StepType          string
+	StepName          string
+	PipelineName      string
+	JobName           string
+}
+
+func (event VolumeStreamed) Emit(logger lager.Logger) {
+	Metrics.emit(
+		logger.Session("volume-streamed-details"),
+		Event{
+			Name:  "volume streamed details",
+			Value: float64(event.Size),
+			Attributes: map[string]string{
+				"source_worker":      event.SourceWorker,
+				"destination_worker": event.DestinationWorker,
+				"step_type":          event.StepType,
+				"step_name":          event.StepName,
+				"pipeline_name":      event.PipelineName,
+				"job_name":           event.JobName,
+			},
+		},
+	)
+}

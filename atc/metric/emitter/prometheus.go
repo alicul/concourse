@@ -78,7 +78,9 @@ type PrometheusEmitter struct {
 
 	checksEnqueued prometheus.Counter
 
-	volumesStreamed prometheus.Counter
+	volumesStreamed      prometheus.Counter
+	volumesStreamedCount *prometheus.CounterVec
+	volumesStreamedBytes *prometheus.CounterVec
 
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
@@ -576,6 +578,30 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(volumesStreamed)
 
+	volumesStreamedCount := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streamed_count",
+			Help:        "Total number of volumes streamed from one worker to the other with metadata",
+			ConstLabels: attributes,
+		},
+		[]string{"source_worker", "destination_worker", "step_type", "step_name", "pipeline_name", "job_name"},
+	)
+	prometheus.MustRegister(volumesStreamedCount)
+
+	volumesStreamedBytes := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streamed_bytes",
+			Help:        "Total size of volumes streamed from one worker to the other with metadata",
+			ConstLabels: attributes,
+		},
+		[]string{"source_worker", "destination_worker", "step_type", "step_name", "pipeline_name", "job_name"},
+	)
+	prometheus.MustRegister(volumesStreamedBytes)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -890,7 +916,9 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		workerUnknownVolumes:               workerUnknownVolumes,
 		workerOrphanedVolumesToBeCollected: workerOrphanedVolumesToBeCollected,
 
-		volumesStreamed: volumesStreamed,
+		volumesStreamed:      volumesStreamed,
+		volumesStreamedCount: volumesStreamedCount,
+		volumesStreamedBytes: volumesStreamedBytes,
 
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
@@ -1031,6 +1059,23 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.checksEnqueued.Add(event.Value)
 	case "volumes streamed":
 		emitter.volumesStreamed.Add(event.Value)
+	case "volume streamed details":
+		emitter.volumesStreamedCount.WithLabelValues(
+			event.Attributes["source_worker"],
+			event.Attributes["destination_worker"],
+			event.Attributes["step_type"],
+			event.Attributes["step_name"],
+			event.Attributes["pipeline_name"],
+			event.Attributes["job_name"],
+		).Inc()
+		emitter.volumesStreamedBytes.WithLabelValues(
+			event.Attributes["source_worker"],
+			event.Attributes["destination_worker"],
+			event.Attributes["step_type"],
+			event.Attributes["step_name"],
+			event.Attributes["pipeline_name"],
+			event.Attributes["job_name"],
+		).Add(event.Value)
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
