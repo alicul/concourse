@@ -1,0 +1,89 @@
+//go:build windows
+
+package workercmd
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"code.cloudfoundry.org/lager/v3"
+	"github.com/concourse/concourse/atc"
+	"github.com/concourse/flag/v2"
+	"github.com/jessevdk/go-flags"
+	"github.com/tedsuo/ifrit"
+)
+
+type RuntimeConfiguration struct {
+	Runtime string `long:"runtime" default:"houdini" choice:"containerd" choice:"houdini" description:"Runtime to use with the worker. Please note that Houdini is insecure and doesn't run 'tasks' in containers."`
+}
+
+type GuardianRuntime struct {
+	RequestTimeout time.Duration `long:"request-timeout" default:"5m" description:"How long to wait for requests to the Garden server to complete. 0 means no timeout."`
+}
+
+type ContainerdRuntime struct {
+	Config           flag.File     `long:"config"          description:"Path to a config file to use for the Containerd daemon."`
+	Bin              string        `long:"bin"             description:"Path to a containerd executable (non-absolute names get resolved from %%PATH%%)."`
+	LogLevel         string        `long:"log-level" default:"info" description:"Minimum level of logs to see." choice:"trace" choice:"debug" choice:"info" choice:"warn" choice:"error" choice:"fatal" choice:"panic"`
+	RequestTimeout   time.Duration `long:"request-timeout" default:"5m" description:"How long to wait for requests to Containerd to complete. 0 means no timeout."`
+	MaxContainers    int           `long:"max-containers" default:"250" description:"Max container capacity. 0 means no limit."`
+	HyperVIsolation  bool          `long:"hyperv-isolation" description:"Run containers with Hyper-V isolation instead of process isolation. Required when the host OS build doesn't match the container image build. Requires Hyper-V to be enabled."`
+
+	Network struct {
+		DNSServers []string `long:"dns-server" description:"DNS server IP address to use instead of automatically determined servers. Can be specified multiple times."`
+	} `group:"Containerd Networking"`
+}
+
+type Certs struct{}
+
+const containerdRuntime = "containerd"
+const houdiniRuntime = "houdini"
+
+func (cmd WorkerCommand) LessenRequirements(prefix string, command *flags.Command) {
+	command.FindOptionByLongName(prefix + "baggageclaim-volumes").Required = false
+}
+
+func (cmd *WorkerCommand) gardenServerRunner(logger lager.Logger) (atc.Worker, ifrit.Runner, error) {
+	worker := cmd.Worker.Worker()
+	worker.Platform = "windows"
+
+	var err error
+	worker.Name, err = cmd.workerName()
+	if err != nil {
+		return atc.Worker{}, nil, err
+	}
+
+	var runner ifrit.Runner
+
+	switch cmd.Runtime {
+	case containerdRuntime:
+		runner, err = cmd.containerdRunner(logger)
+	case houdiniRuntime:
+		runner, err = cmd.houdiniRunner(logger)
+	default:
+		err = fmt.Errorf("unsupported runtime: %s", cmd.Runtime)
+	}
+
+	if err != nil {
+		return atc.Worker{}, nil, err
+	}
+
+	return worker, runner, nil
+}
+
+func (cmd *WorkerCommand) baggageclaimRunner(logger lager.Logger) (ifrit.Runner, error) {
+	volumesDir := filepath.Join(cmd.WorkDir.Path(), "volumes")
+
+	err := os.MkdirAll(volumesDir, 0755)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd.Baggageclaim.VolumesDir = flag.Dir(volumesDir)
+
+	cmd.Baggageclaim.OverlaysDir = filepath.Join(cmd.WorkDir.Path(), "overlays")
+
+	return cmd.Baggageclaim.Runner(logger, nil)
+}

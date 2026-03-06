@@ -29,7 +29,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports: [8080:8080]
+    ports: [8080:8080, 2222:2222]
     networks:
       - default
     volumes:
