@@ -17,7 +17,7 @@ import (
 )
 
 const containerdNamespace = "concourse"
-const defaultContainerdPipe = `\\.\pipe\containerd-containerd`
+const defaultContainerdPipe = `\\.\pipe\concourse-containerd`
 
 func WriteDefaultContainerdConfig(dest string) error {
 	const config = `
@@ -44,6 +44,7 @@ func (cmd *WorkerCommand) containerdGardenServerRunner(
 		windowscontainerd.WithRequestTimeout(cmd.Containerd.RequestTimeout),
 		windowscontainerd.WithMaxContainers(cmd.Containerd.MaxContainers),
 		windowscontainerd.WithDNSServers(cmd.Containerd.Network.DNSServers),
+		windowscontainerd.WithWorkDir(cmd.WorkDir.Path()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("windows containerd backend init: %w", err)
@@ -84,9 +85,16 @@ func (cmd *WorkerCommand) containerdRunner(logger lager.Logger) (ifrit.Runner, e
 		bin = cmd.Containerd.Bin
 	}
 
+	state := filepath.Join(cmd.WorkDir.Path(), "containerd-state")
+	err = os.MkdirAll(state, 0755)
+	if err != nil {
+		return nil, err
+	}
+
 	command := exec.Command(bin,
 		"--address="+pipe,
 		"--root="+root,
+		"--state="+state,
 		"--config="+config,
 		"--log-level="+cmd.Containerd.LogLevel,
 	)

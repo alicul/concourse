@@ -78,7 +78,7 @@ Given these fundamental differences, we chose to create a **separate package** (
 **Purpose**: Starts the containerd daemon and Garden server on Windows
 
 **Key differences from the Linux version (`containerd.go`)**:
-- **Named pipe** instead of Unix socket: containerd on Windows uses `\\.\pipe\containerd-containerd` for its gRPC API (rather than `/run/containerd/containerd.sock`)
+- **Named pipe** instead of Unix socket: containerd on Windows uses `\\.\pipe\concourse-containerd` for its gRPC API (rather than `/run/containerd/containerd.sock`). A unique pipe name is used to avoid conflicts with Docker Desktop's containerd, which uses `\\.\pipe\containerd-containerd`.
 - **No `SysProcAttr.Pdeathsig`**: `Pdeathsig` (parent death signal) is a Linux-specific mechanism. On Windows, child processes are managed differently.
 - **No DNS proxy**: The Linux version optionally runs a DNS proxy server. On Windows, DNS is configured through HNS network settings.
 - **No CNI network setup**: The Linux `containerdGardenServerRunner()` builds CNI network options with multiple configuration parameters. Windows networking is handled by the HNS-based backend.
@@ -293,7 +293,7 @@ Rather than refactoring the heavily Linux-coupled `worker/runtime/` package (whi
 **Worker command layer:**
 
 - **`worker/workercmd/worker_windows.go`** -- Windows worker command with `--runtime` flag supporting `containerd` and `houdini` (defaulting to `houdini` for backward compatibility)
-- **`worker/workercmd/containerd_windows.go`** -- Windows containerd runner that starts the containerd daemon via named pipe (`\\.\pipe\containerd-containerd`) and creates the Garden server
+- **`worker/workercmd/containerd_windows.go`** -- Windows containerd runner that starts the containerd daemon via named pipe (`\\.\pipe\concourse-containerd`) and creates the Garden server
 
 **Windows containerd backend package (`worker/runtime/windowscontainerd/`):**
 
@@ -314,3 +314,254 @@ All three target platforms compile successfully:
 - `GOOS=linux go build ./worker/workercmd/...` -- OK
 - `GOOS=windows go build ./worker/workercmd/...` -- OK
 - `GOOS=darwin go build ./worker/workercmd/...` -- OK
+
+## Running a Windows Worker with Docker Compose on WSL
+
+This section describes how to run the Concourse web/ATC and a Linux worker inside Docker Compose on WSL2, while running an additional Windows worker natively on the Windows host.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Windows Host                                        │
+│                                                      │
+│  ┌──────────────────────────────────────────────┐    │
+│  │  WSL2 (Linux)                                │    │
+│  │                                              │    │
+│  │  Docker Compose:                             │    │
+│  │    ┌─────┐  ┌──────────┐  ┌──────────────┐  │    │
+│  │    │ db  │  │ web/ATC  │  │ Linux Worker │  │    │
+│  │    │     │  │ TSA:2222 │  │ (containerd) │  │    │
+│  │    └─────┘  │ HTTP:8080│  └──────────────┘  │    │
+│  │             └──────────┘                     │    │
+│  │                 ↑ ports forwarded to host    │    │
+│  └─────────────────│────────────────────────────┘    │
+│                    │                                  │
+│  ┌─────────────────│────────────────────────────┐    │
+│  │  Windows Worker │ (native)                   │    │
+│  │                 │                             │    │
+│  │  concourse.exe worker                        │    │
+│  │    → SSH to localhost:2222 (TSA)              │    │
+│  │    → containerd.exe (\\.\pipe\concourse-...)  │    │
+│  │                                               │    │
+│  │  Docker Desktop (can coexist)                 │    │
+│  │    → containerd (\\.\pipe\containerd-...)     │    │
+│  └───────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────┘
+```
+
+The Windows worker connects to TSA via SSH (port 2222). TSA sets up reverse SSH tunnels for Garden and Baggageclaim, so the ATC can reach the worker through the SSH connection. No inbound ports are needed on the Windows host.
+
+### Docker Compose Changes
+
+The `docker-compose.yml` exposes TSA port 2222 on the `web` service so the Windows host can reach it:
+
+```yaml
+web:
+  ports: [8080:8080, 2222:2222]
+```
+
+### Docker Desktop Coexistence
+
+The Concourse worker's containerd instance is fully isolated from Docker Desktop:
+
+| Resource          | Docker Desktop              | Concourse Worker                                  |
+|-------------------|-----------------------------|----------------------------------------------------|
+| Named pipe        | `\\.\pipe\containerd-containerd` | `\\.\pipe\concourse-containerd`              |
+| Root directory    | Docker internal             | `<work-dir>\containerd\`                           |
+| State directory   | Docker internal             | `<work-dir>\containerd-state\`                     |
+| containerd binary | Bundled with Docker Desktop | Separately installed                                |
+
+Docker Desktop does **not** need to be stopped. Both instances can run simultaneously.
+
+### Step-by-Step Setup
+
+#### Prerequisites
+
+- WSL2 with Docker installed (Docker Desktop or docker-ce in WSL)
+- Go toolchain available in WSL (for cross-compiling)
+- Node.js and yarn available in WSL (for building the Elm web UI)
+- **Windows Server 2019+** or **Windows 10/11 Pro/Enterprise** (Windows Home does not support Windows containers)
+
+#### Required Components
+
+| Component | What it does | Linux equivalent |
+|---|---|---|
+| Windows Containers feature | Provides HCS kernel support | Linux kernel (namespaces, cgroups) |
+| `containerd.exe` | Container lifecycle daemon, gRPC API | `containerd` |
+| `containerd-shim-runhcs-v1.exe` | Bridges containerd to HCS | `containerd-shim-runc-v2` + `runc` |
+| `concourse.exe` | The Concourse worker itself | `concourse` |
+
+On Linux, the Concourse release tarball bundles `containerd`, `runc`, `containerd-shim-runc-v2`, `cni-plugins`, and `gdn-init` together. For Windows, these must be installed separately until a Windows distribution package exists.
+
+#### 1. Enable Windows Containers Feature
+
+On the Windows host, open an elevated PowerShell:
+
+```powershell
+# Enable the Containers feature (requires reboot)
+Enable-WindowsOptionalFeature -Online -FeatureName Containers -All
+
+# If using Windows Server, use:
+# Install-WindowsFeature -Name Containers
+```
+
+#### 2. Install containerd on Windows
+
+Download and install containerd for Windows. This is a **separate installation** from Docker Desktop's bundled containerd.
+
+```powershell
+# Download containerd (check https://github.com/containerd/containerd/releases for latest)
+$version = "2.0.4"
+curl.exe --ssl-no-revoke -LO "https://github.com/containerd/containerd/releases/download/v${version}/containerd-${version}-windows-amd64.tar.gz"
+
+# Extract to a permanent location
+mkdir C:\containerd -Force
+tar xzf "containerd-${version}-windows-amd64.tar.gz" -C C:\containerd
+
+# Add to PATH (persistent)
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\containerd\bin", "Machine")
+
+# Refresh current session
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
+
+# Verify
+containerd.exe --version
+```
+
+#### 3. Install the runhcs shim
+
+Containerd needs `containerd-shim-runhcs-v1.exe` to create Windows containers. This is the Windows equivalent of `runc` on Linux — it bridges containerd to the Windows Host Compute Service (HCS). It comes from Microsoft's [hcsshim](https://github.com/microsoft/hcsshim) project:
+
+```powershell
+# Check https://github.com/microsoft/hcsshim/releases for latest version
+$shimVersion = "0.12.9"
+curl.exe --ssl-no-revoke -LO "https://github.com/microsoft/hcsshim/releases/download/v${shimVersion}/containerd-shim-runhcs-v1.exe"
+
+# Must be in the same directory as containerd.exe, or in PATH
+Move-Item -Force containerd-shim-runhcs-v1.exe C:\containerd\bin\
+
+# Verify both are present
+Get-ChildItem C:\containerd\bin\
+```
+
+Without this shim, containerd will start but fail when trying to create containers.
+
+#### 4. Build the Elm Web UI
+
+The Concourse web UI is written in Elm and must be compiled before the web server can serve it. Without this step, `http://localhost:8080` will load a blank page.
+
+In WSL:
+
+```bash
+cd /path/to/concourse
+
+# If yarn is not installed, enable it via corepack (ships with Node.js):
+corepack enable
+
+# Install dependencies and build the frontend
+yarn install
+yarn build
+```
+
+This compiles the Elm source in `web/elm/` into JavaScript assets in `web/public/`. The Docker Compose setup mounts `web/public/` into the web container, so locally built assets are served automatically.
+
+#### 5. Build concourse.exe for Windows
+
+In WSL, cross-compile the Concourse binary and build the `fly` CLI:
+
+```bash
+cd /path/to/concourse
+
+# Build concourse.exe for Windows
+GOOS=windows GOARCH=amd64 go build -o concourse.exe ./cmd/concourse
+
+# Create target directory and copy to a Windows-accessible location
+mkdir -p /mnt/c/concourse
+cp concourse.exe /mnt/c/concourse/concourse.exe
+
+# Build the fly CLI (installed to $GOPATH/bin/fly)
+go install ./fly
+```
+
+#### 6. Copy SSH Keys to Windows
+
+The worker needs the TSA host public key and a worker private key:
+
+```bash
+# From WSL, copy the dev keys to a Windows-accessible path
+mkdir -p /mnt/c/concourse/keys
+cp hack/keys/tsa_host_key.pub /mnt/c/concourse/keys/
+cp hack/keys/worker_key /mnt/c/concourse/keys/
+```
+
+#### 7. Start Docker Compose in WSL
+
+```bash
+cd /path/to/concourse
+docker compose up -d
+```
+
+Verify TSA is reachable from the Windows host. In a Windows terminal:
+
+```powershell
+# Test that TSA port is accessible
+Test-NetConnection -ComputerName localhost -Port 2222
+```
+
+#### 8. Start the Windows Worker
+
+On the Windows host, open an elevated PowerShell (Administrator required for containerd):
+
+```powershell
+C:\concourse\concourse.exe worker `
+    --work-dir C:\concourse\work `
+    --runtime containerd `
+    --tsa-host localhost:2222 `
+    --tsa-public-key C:\concourse\keys\tsa_host_key.pub `
+    --tsa-worker-private-key C:\concourse\keys\worker_key
+```
+
+The worker will:
+1. Start its own containerd daemon on `\\.\pipe\concourse-containerd`
+2. Connect to TSA at `localhost:2222` (forwarded from WSL2 Docker Compose)
+3. Register itself as a `windows` platform worker
+4. Begin heartbeating to the ATC
+
+#### 9. Verify in the Concourse UI
+
+Open http://localhost:8080 in a browser. Navigate to the workers page. You should see two workers:
+- A `linux` worker (from Docker Compose)
+- A `windows` worker (your native Windows worker)
+
+#### 10. Run a Test Pipeline
+
+A sample pipeline is provided at `worker/windows-hello-world.yml` to verify the Windows worker end-to-end. It pulls a minimal Windows container image and runs a simple command.
+
+```bash
+# Log in to the local Concourse (default dev credentials)
+fly -t local login -c http://localhost:8080 -u test -p test
+
+# Set and unpause the pipeline
+fly -t local set-pipeline -p windows-hello -c worker/windows-hello-world.yml
+fly -t local unpause-pipeline -p windows-hello
+
+# Trigger the job and watch the output
+fly -t local trigger-job -j windows-hello/hello-windows -w
+```
+
+The pipeline uses `mcr.microsoft.com/windows/nanoserver:ltsc2022`. If your Windows host is running an older version (e.g., Windows Server 2019), change the tag to `ltsc2019` in the pipeline file — Windows containers require the container OS version to match the host kernel version.
+
+### Troubleshooting
+
+**TSA port not reachable from Windows**: WSL2 port forwarding should expose 2222 automatically via Docker Desktop or `netsh` forwarding. If `Test-NetConnection localhost -Port 2222` fails, check that Docker Compose is running and the web service is healthy.
+
+**containerd fails to start**: Ensure the Containers Windows feature is enabled and you are running as Administrator. Check that Docker Desktop's containerd is not using the same pipe name (it should not, since we use `concourse-containerd`).
+
+**Container creation fails**: Ensure `containerd-shim-runhcs-v1.exe` is installed in the same directory as `containerd.exe` or is available in `%PATH%`. Without this shim, containerd cannot create Windows containers. Verify with `Get-ChildItem C:\containerd\bin\` — you should see both `containerd.exe` and `containerd-shim-runhcs-v1.exe`.
+
+**Web UI loads a blank page**: The Elm frontend has not been compiled. Run `yarn install && yarn build` in the concourse repo root in WSL. The web container mounts `web/public/` from your local checkout, so the built assets will be served immediately after a browser refresh — no container restart needed.
+
+**curl.exe SSL error (`CRYPT_E_NO_REVOCATION_CHECK`)**: Windows' native `curl.exe` uses schannel for TLS and may fail certificate revocation checks behind corporate firewalls. Add `--ssl-no-revoke` to the curl command.
+
+**Worker does not appear in UI**: Check the worker logs for SSH authentication errors. Ensure the `tsa_host_key.pub` and `worker_key` files match the keys used by the Docker Compose web service (they should if copied from `hack/keys/`).

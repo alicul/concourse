@@ -2,6 +2,7 @@ package windowscontainerd
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 // There is no seccomp, cgroups, user namespaces, or Linux capabilities.
 // Resource limits use the Windows-native Job Object model via the Windows
 // section of the OCI spec.
-func OciSpec(gdn garden.ContainerSpec) (*specs.Spec, error) {
+func OciSpec(gdn garden.ContainerSpec, scratchDir string) (*specs.Spec, error) {
 	if gdn.Handle == "" {
 		return nil, fmt.Errorf("handle must be specified")
 	}
@@ -53,7 +54,7 @@ func OciSpec(gdn garden.ContainerSpec) (*specs.Spec, error) {
 		Mounts:      mounts,
 		Annotations: map[string]string(gdn.Properties),
 		Windows: &specs.Windows{
-			LayerFolders: []string{rootfs},
+			LayerFolders: []string{rootfs, scratchDir},
 			Resources:    windowsResources,
 			Network: &specs.WindowsNetwork{
 				AllowUnqualifiedDNSQuery: true,
@@ -72,7 +73,10 @@ func ociSpecBindMounts(bindMounts []garden.BindMount) ([]specs.Mount, error) {
 			return nil, fmt.Errorf("src and dst must not be empty")
 		}
 
-		if !filepath.IsAbs(bm.SrcPath) || !filepath.IsAbs(bm.DstPath) {
+		srcPath := toWindowsPath(bm.SrcPath)
+		dstPath := toWindowsPath(bm.DstPath)
+
+		if !filepath.IsAbs(srcPath) || !filepath.IsAbs(dstPath) {
 			return nil, fmt.Errorf("src and dst must be absolute")
 		}
 
@@ -91,13 +95,23 @@ func ociSpecBindMounts(bindMounts []garden.BindMount) ([]specs.Mount, error) {
 		}
 
 		mounts = append(mounts, specs.Mount{
-			Source:      bm.SrcPath,
-			Destination: bm.DstPath,
+			Source:      srcPath,
+			Destination: dstPath,
 			Options:     options,
 		})
 	}
 
 	return mounts, nil
+}
+
+// toWindowsPath converts Unix-style absolute paths to Windows paths.
+// The ATC may send paths like /scratch or /tmp/build/abc without knowing
+// the worker is Windows. These are converted to C:\scratch, C:\tmp\build\abc, etc.
+func toWindowsPath(p string) string {
+	if strings.HasPrefix(p, "/") {
+		return `C:` + filepath.FromSlash(p)
+	}
+	return filepath.FromSlash(p)
 }
 
 func ociWindowsResources(limits garden.Limits) *specs.WindowsResources {
@@ -147,6 +161,15 @@ func rootfsDir(raw string) (string, error) {
 	if scheme != "raw" {
 		return "", fmt.Errorf("unsupported scheme '%s'", scheme)
 	}
+
+	// The RootFSPath may contain URL-encoded backslashes (%5C) when Windows
+	// paths are passed through the Garden API as URIs.
+	decoded, err := url.PathUnescape(directory)
+	if err == nil {
+		directory = decoded
+	}
+
+	directory = filepath.FromSlash(directory)
 
 	if !filepath.IsAbs(directory) {
 		return "", fmt.Errorf("directory must be an absolute path")

@@ -59,7 +59,7 @@ func (s *SpecSuite) TestOciSpecValidations() {
 		},
 	} {
 		s.T().Run(tc.desc, func(t *testing.T) {
-			_, err := windowscontainerd.OciSpec(tc.spec)
+			_, err := windowscontainerd.OciSpec(tc.spec, `C:\scratch`)
 			s.Error(err)
 		})
 	}
@@ -71,7 +71,7 @@ func (s *SpecSuite) TestOciSpecValid() {
 		RootFSPath: "raw:///rootfs",
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.NotNil(oci)
 
@@ -90,7 +90,7 @@ func (s *SpecSuite) TestOciSpecUsesImageURIWhenNoRootFSPath() {
 		Image:  garden.ImageRef{URI: "raw:///image-rootfs"},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.Equal("/image-rootfs", oci.Root.Path)
 }
@@ -101,7 +101,7 @@ func (s *SpecSuite) TestOciSpecDefaultProcess() {
 		RootFSPath: "raw:///rootfs",
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 
 	s.NotNil(oci.Process)
@@ -117,7 +117,7 @@ func (s *SpecSuite) TestOciSpecEnvVars() {
 		Env:        []string{"FOO=bar", "BAZ=qux"},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.Contains(oci.Process.Env, "FOO=bar")
 	s.Contains(oci.Process.Env, "BAZ=qux")
@@ -132,7 +132,7 @@ func (s *SpecSuite) TestOciSpecProperties() {
 		},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.Equal("main", oci.Annotations["concourse:team"])
 }
@@ -207,7 +207,7 @@ func (s *SpecSuite) TestOciSpecBindMounts() {
 				BindMounts: tc.mounts,
 			}
 
-			_, err := windowscontainerd.OciSpec(spec)
+			_, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 			if tc.succeeds {
 				s.NoError(err)
 			} else {
@@ -227,7 +227,7 @@ func (s *SpecSuite) TestOciSpecBindMountOptions() {
 		},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 
 	s.Len(oci.Mounts, 2)
@@ -241,7 +241,7 @@ func (s *SpecSuite) TestOciSpecNoResourceLimits() {
 		RootFSPath: "raw:///rootfs",
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.Nil(oci.Windows.Resources)
 }
@@ -257,7 +257,7 @@ func (s *SpecSuite) TestOciSpecCPULimits() {
 		},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 
 	s.NotNil(oci.Windows.Resources)
@@ -276,7 +276,7 @@ func (s *SpecSuite) TestOciSpecCPUWeight() {
 		},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 
 	s.NotNil(oci.Windows.Resources.CPU)
@@ -294,7 +294,7 @@ func (s *SpecSuite) TestOciSpecMemoryLimits() {
 		},
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 
 	s.NotNil(oci.Windows.Resources)
@@ -308,7 +308,7 @@ func (s *SpecSuite) TestOciSpecNoLinuxSection() {
 		RootFSPath: "raw:///rootfs",
 	}
 
-	oci, err := windowscontainerd.OciSpec(spec)
+	oci, err := windowscontainerd.OciSpec(spec, `C:\scratch`)
 	s.NoError(err)
 	s.Nil(oci.Linux)
 }

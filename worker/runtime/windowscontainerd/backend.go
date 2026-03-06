@@ -15,6 +15,8 @@ package windowscontainerd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +39,7 @@ type GardenBackend struct {
 	maxContainers  int
 	requestTimeout time.Duration
 	dnsServers     []string
+	workDir        string
 }
 
 var _ garden.Backend = (*GardenBackend)(nil)
@@ -56,6 +59,12 @@ func WithMaxContainers(limit int) GardenBackendOpt {
 func WithDNSServers(servers []string) GardenBackendOpt {
 	return func(b *GardenBackend) {
 		b.dnsServers = servers
+	}
+}
+
+func WithWorkDir(dir string) GardenBackendOpt {
+	return func(b *GardenBackend) {
+		b.workDir = dir
 	}
 }
 
@@ -93,7 +102,12 @@ func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, 
 		return nil, err
 	}
 
-	oci, err := OciSpec(gdnSpec)
+	scratchDir := filepath.Join(b.workDir, "scratch", gdnSpec.Handle)
+	if err := os.MkdirAll(scratchDir, 0755); err != nil {
+		return nil, fmt.Errorf("create scratch dir: %w", err)
+	}
+
+	oci, err := OciSpec(gdnSpec, scratchDir)
 	if err != nil {
 		return nil, fmt.Errorf("windows oci spec: %w", err)
 	}

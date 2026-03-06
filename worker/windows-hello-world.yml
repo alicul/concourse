@@ -1,0 +1,23 @@
+resources:
+  - name: windows-image
+    type: registry-image
+    source:
+      repository: mcr.microsoft.com/windows/nanoserver
+      tag: ltsc2022
+      platform:
+        os: windows
+        architecture: amd64
+
+jobs:
+  - name: hello-windows
+    plan:
+      - get: windows-image
+      - task: hello
+        image: windows-image
+        config:
+          platform: windows
+          run:
+            path: cmd.exe
+            args:
+              - /C
+              - "ver && echo Hello World"
