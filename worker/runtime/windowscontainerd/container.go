@@ -50,6 +50,9 @@ func (c *Container) Stop(kill bool) error {
 
 	task, err := c.container.Task(ctx, cio.Load)
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("task lookup: %w", err)
 	}
 
