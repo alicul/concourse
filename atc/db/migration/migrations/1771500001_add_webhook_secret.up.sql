@@ -1,0 +1,2 @@
+ALTER TABLE webhooks ADD COLUMN secret TEXT DEFAULT '';
+ALTER TABLE webhooks ADD COLUMN nonce TEXT;

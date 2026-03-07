@@ -1,0 +1,18 @@
+---
+# webhook-matchers.yml
+# Load via: CONCOURSE_WEBHOOK_MATCHERS=hack/webhook-test/webhook-matchers.yml
+git:
+  github:
+    signature_header: X-Hub-Signature-256
+    signature_algo: hmac-sha256
+    rules:
+      - source_field: uri
+        source_pattern: 'github\.com/(.+?)(?:\.git)?$'
+        payload_field: repository.full_name
+      - source_field: branch
+        payload_field: ref
+        payload_pattern: 'refs/heads/(.+)'
+      - source_field: tag_filter
+        payload_field: ref
+        payload_pattern: 'refs/tags/(.+)'
+        source_is_pattern: true

@@ -35,6 +35,7 @@ services:
     volumes:
       - .:/src
       - "./hack/keys:/concourse-keys"
+      - "./hack/webhook-test/webhook-matchers.yml:/webhook-matchers.yml:ro"
     environment:
       CONCOURSE_SESSION_SIGNING_KEY: /concourse-keys/session_signing_key
       CONCOURSE_TSA_AUTHORIZED_KEYS: /concourse-keys/authorized_worker_keys
@@ -51,6 +52,7 @@ services:
       CONCOURSE_CLUSTER_NAME: dev
       CONCOURSE_ENABLE_CACHE_STREAMED_VOLUMES: "true"
       CONCOURSE_ENABLE_RESOURCE_CAUSALITY: "true"
+      CONCOURSE_WEBHOOK_MATCHERS: /webhook-matchers.yml
 
   worker:
     build: .

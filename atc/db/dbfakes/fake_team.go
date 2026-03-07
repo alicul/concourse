@@ -2,6 +2,7 @@
 package dbfakes
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -108,6 +109,17 @@ type FakeTeam struct {
 	deleteReturnsOnCall map[int]struct {
 		result1 error
 	}
+	DestroyWebhookStub        func(string) error
+	destroyWebhookMutex       sync.RWMutex
+	destroyWebhookArgsForCall []struct {
+		arg1 string
+	}
+	destroyWebhookReturns struct {
+		result1 error
+	}
+	destroyWebhookReturnsOnCall map[int]struct {
+		result1 error
+	}
 	FindCheckContainersStub        func(lager.Logger, atc.PipelineRef, string) ([]db.Container, map[int]time.Time, error)
 	findCheckContainersMutex       sync.RWMutex
 	findCheckContainersArgsForCall []struct {
@@ -168,6 +180,33 @@ type FakeTeam struct {
 		result2 bool
 		result3 error
 	}
+	FindResourcesByWebhookPayloadStub        func(string, json.RawMessage) ([]db.Resource, error)
+	findResourcesByWebhookPayloadMutex       sync.RWMutex
+	findResourcesByWebhookPayloadArgsForCall []struct {
+		arg1 string
+		arg2 json.RawMessage
+	}
+	findResourcesByWebhookPayloadReturns struct {
+		result1 []db.Resource
+		result2 error
+	}
+	findResourcesByWebhookPayloadReturnsOnCall map[int]struct {
+		result1 []db.Resource
+		result2 error
+	}
+	FindResourcesByWebhookTypeStub        func(string) ([]db.Resource, error)
+	findResourcesByWebhookTypeMutex       sync.RWMutex
+	findResourcesByWebhookTypeArgsForCall []struct {
+		arg1 string
+	}
+	findResourcesByWebhookTypeReturns struct {
+		result1 []db.Resource
+		result2 error
+	}
+	findResourcesByWebhookTypeReturnsOnCall map[int]struct {
+		result1 []db.Resource
+		result2 error
+	}
 	FindVolumeForWorkerArtifactStub        func(int) (db.CreatedVolume, bool, error)
 	findVolumeForWorkerArtifactMutex       sync.RWMutex
 	findVolumeForWorkerArtifactArgsForCall []struct {
@@ -180,6 +219,21 @@ type FakeTeam struct {
 	}
 	findVolumeForWorkerArtifactReturnsOnCall map[int]struct {
 		result1 db.CreatedVolume
+		result2 bool
+		result3 error
+	}
+	FindWebhookStub        func(string) (db.Webhook, bool, error)
+	findWebhookMutex       sync.RWMutex
+	findWebhookArgsForCall []struct {
+		arg1 string
+	}
+	findWebhookReturns struct {
+		result1 db.Webhook
+		result2 bool
+		result3 error
+	}
+	findWebhookReturnsOnCall map[int]struct {
+		result1 db.Webhook
 		result2 bool
 		result3 error
 	}
@@ -394,6 +448,19 @@ type FakeTeam struct {
 		result2 bool
 		result3 error
 	}
+	SaveWebhookStub        func(db.WebhookConfig) (db.Webhook, error)
+	saveWebhookMutex       sync.RWMutex
+	saveWebhookArgsForCall []struct {
+		arg1 db.WebhookConfig
+	}
+	saveWebhookReturns struct {
+		result1 db.Webhook
+		result2 error
+	}
+	saveWebhookReturnsOnCall map[int]struct {
+		result1 db.Webhook
+		result2 error
+	}
 	SaveWorkerStub        func(atc.Worker, time.Duration) (db.Worker, error)
 	saveWorkerMutex       sync.RWMutex
 	saveWorkerArgsForCall []struct {
@@ -418,6 +485,18 @@ type FakeTeam struct {
 	}
 	updateProviderAuthReturnsOnCall map[int]struct {
 		result1 error
+	}
+	WebhooksStub        func() ([]db.Webhook, error)
+	webhooksMutex       sync.RWMutex
+	webhooksArgsForCall []struct {
+	}
+	webhooksReturns struct {
+		result1 []db.Webhook
+		result2 error
+	}
+	webhooksReturnsOnCall map[int]struct {
+		result1 []db.Webhook
+		result2 error
 	}
 	WorkersStub        func() ([]db.Worker, error)
 	workersMutex       sync.RWMutex
@@ -904,6 +983,67 @@ func (fake *FakeTeam) DeleteReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *FakeTeam) DestroyWebhook(arg1 string) error {
+	fake.destroyWebhookMutex.Lock()
+	ret, specificReturn := fake.destroyWebhookReturnsOnCall[len(fake.destroyWebhookArgsForCall)]
+	fake.destroyWebhookArgsForCall = append(fake.destroyWebhookArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.DestroyWebhookStub
+	fakeReturns := fake.destroyWebhookReturns
+	fake.recordInvocation("DestroyWebhook", []interface{}{arg1})
+	fake.destroyWebhookMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeTeam) DestroyWebhookCallCount() int {
+	fake.destroyWebhookMutex.RLock()
+	defer fake.destroyWebhookMutex.RUnlock()
+	return len(fake.destroyWebhookArgsForCall)
+}
+
+func (fake *FakeTeam) DestroyWebhookCalls(stub func(string) error) {
+	fake.destroyWebhookMutex.Lock()
+	defer fake.destroyWebhookMutex.Unlock()
+	fake.DestroyWebhookStub = stub
+}
+
+func (fake *FakeTeam) DestroyWebhookArgsForCall(i int) string {
+	fake.destroyWebhookMutex.RLock()
+	defer fake.destroyWebhookMutex.RUnlock()
+	argsForCall := fake.destroyWebhookArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTeam) DestroyWebhookReturns(result1 error) {
+	fake.destroyWebhookMutex.Lock()
+	defer fake.destroyWebhookMutex.Unlock()
+	fake.DestroyWebhookStub = nil
+	fake.destroyWebhookReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeTeam) DestroyWebhookReturnsOnCall(i int, result1 error) {
+	fake.destroyWebhookMutex.Lock()
+	defer fake.destroyWebhookMutex.Unlock()
+	fake.DestroyWebhookStub = nil
+	if fake.destroyWebhookReturnsOnCall == nil {
+		fake.destroyWebhookReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.destroyWebhookReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *FakeTeam) FindCheckContainers(arg1 lager.Logger, arg2 atc.PipelineRef, arg3 string) ([]db.Container, map[int]time.Time, error) {
 	fake.findCheckContainersMutex.Lock()
 	ret, specificReturn := fake.findCheckContainersReturnsOnCall[len(fake.findCheckContainersArgsForCall)]
@@ -1171,6 +1311,135 @@ func (fake *FakeTeam) FindCreatedContainerByHandleReturnsOnCall(i int, result1 d
 	}{result1, result2, result3}
 }
 
+func (fake *FakeTeam) FindResourcesByWebhookPayload(arg1 string, arg2 json.RawMessage) ([]db.Resource, error) {
+	fake.findResourcesByWebhookPayloadMutex.Lock()
+	ret, specificReturn := fake.findResourcesByWebhookPayloadReturnsOnCall[len(fake.findResourcesByWebhookPayloadArgsForCall)]
+	fake.findResourcesByWebhookPayloadArgsForCall = append(fake.findResourcesByWebhookPayloadArgsForCall, struct {
+		arg1 string
+		arg2 json.RawMessage
+	}{arg1, arg2})
+	stub := fake.FindResourcesByWebhookPayloadStub
+	fakeReturns := fake.findResourcesByWebhookPayloadReturns
+	fake.recordInvocation("FindResourcesByWebhookPayload", []interface{}{arg1, arg2})
+	fake.findResourcesByWebhookPayloadMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookPayloadCallCount() int {
+	fake.findResourcesByWebhookPayloadMutex.RLock()
+	defer fake.findResourcesByWebhookPayloadMutex.RUnlock()
+	return len(fake.findResourcesByWebhookPayloadArgsForCall)
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookPayloadCalls(stub func(string, json.RawMessage) ([]db.Resource, error)) {
+	fake.findResourcesByWebhookPayloadMutex.Lock()
+	defer fake.findResourcesByWebhookPayloadMutex.Unlock()
+	fake.FindResourcesByWebhookPayloadStub = stub
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookPayloadArgsForCall(i int) (string, json.RawMessage) {
+	fake.findResourcesByWebhookPayloadMutex.RLock()
+	defer fake.findResourcesByWebhookPayloadMutex.RUnlock()
+	argsForCall := fake.findResourcesByWebhookPayloadArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookPayloadReturns(result1 []db.Resource, result2 error) {
+	fake.findResourcesByWebhookPayloadMutex.Lock()
+	defer fake.findResourcesByWebhookPayloadMutex.Unlock()
+	fake.FindResourcesByWebhookPayloadStub = nil
+	fake.findResourcesByWebhookPayloadReturns = struct {
+		result1 []db.Resource
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookPayloadReturnsOnCall(i int, result1 []db.Resource, result2 error) {
+	fake.findResourcesByWebhookPayloadMutex.Lock()
+	defer fake.findResourcesByWebhookPayloadMutex.Unlock()
+	fake.FindResourcesByWebhookPayloadStub = nil
+	if fake.findResourcesByWebhookPayloadReturnsOnCall == nil {
+		fake.findResourcesByWebhookPayloadReturnsOnCall = make(map[int]struct {
+			result1 []db.Resource
+			result2 error
+		})
+	}
+	fake.findResourcesByWebhookPayloadReturnsOnCall[i] = struct {
+		result1 []db.Resource
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookType(arg1 string) ([]db.Resource, error) {
+	fake.findResourcesByWebhookTypeMutex.Lock()
+	ret, specificReturn := fake.findResourcesByWebhookTypeReturnsOnCall[len(fake.findResourcesByWebhookTypeArgsForCall)]
+	fake.findResourcesByWebhookTypeArgsForCall = append(fake.findResourcesByWebhookTypeArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.FindResourcesByWebhookTypeStub
+	fakeReturns := fake.findResourcesByWebhookTypeReturns
+	fake.recordInvocation("FindResourcesByWebhookType", []interface{}{arg1})
+	fake.findResourcesByWebhookTypeMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookTypeCallCount() int {
+	fake.findResourcesByWebhookTypeMutex.RLock()
+	defer fake.findResourcesByWebhookTypeMutex.RUnlock()
+	return len(fake.findResourcesByWebhookTypeArgsForCall)
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookTypeCalls(stub func(string) ([]db.Resource, error)) {
+	fake.findResourcesByWebhookTypeMutex.Lock()
+	defer fake.findResourcesByWebhookTypeMutex.Unlock()
+	fake.FindResourcesByWebhookTypeStub = stub
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookTypeArgsForCall(i int) string {
+	fake.findResourcesByWebhookTypeMutex.RLock()
+	defer fake.findResourcesByWebhookTypeMutex.RUnlock()
+	argsForCall := fake.findResourcesByWebhookTypeArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookTypeReturns(result1 []db.Resource, result2 error) {
+	fake.findResourcesByWebhookTypeMutex.Lock()
+	defer fake.findResourcesByWebhookTypeMutex.Unlock()
+	fake.FindResourcesByWebhookTypeStub = nil
+	fake.findResourcesByWebhookTypeReturns = struct {
+		result1 []db.Resource
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTeam) FindResourcesByWebhookTypeReturnsOnCall(i int, result1 []db.Resource, result2 error) {
+	fake.findResourcesByWebhookTypeMutex.Lock()
+	defer fake.findResourcesByWebhookTypeMutex.Unlock()
+	fake.FindResourcesByWebhookTypeStub = nil
+	if fake.findResourcesByWebhookTypeReturnsOnCall == nil {
+		fake.findResourcesByWebhookTypeReturnsOnCall = make(map[int]struct {
+			result1 []db.Resource
+			result2 error
+		})
+	}
+	fake.findResourcesByWebhookTypeReturnsOnCall[i] = struct {
+		result1 []db.Resource
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *FakeTeam) FindVolumeForWorkerArtifact(arg1 int) (db.CreatedVolume, bool, error) {
 	fake.findVolumeForWorkerArtifactMutex.Lock()
 	ret, specificReturn := fake.findVolumeForWorkerArtifactReturnsOnCall[len(fake.findVolumeForWorkerArtifactArgsForCall)]
@@ -1233,6 +1502,73 @@ func (fake *FakeTeam) FindVolumeForWorkerArtifactReturnsOnCall(i int, result1 db
 	}
 	fake.findVolumeForWorkerArtifactReturnsOnCall[i] = struct {
 		result1 db.CreatedVolume
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeTeam) FindWebhook(arg1 string) (db.Webhook, bool, error) {
+	fake.findWebhookMutex.Lock()
+	ret, specificReturn := fake.findWebhookReturnsOnCall[len(fake.findWebhookArgsForCall)]
+	fake.findWebhookArgsForCall = append(fake.findWebhookArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.FindWebhookStub
+	fakeReturns := fake.findWebhookReturns
+	fake.recordInvocation("FindWebhook", []interface{}{arg1})
+	fake.findWebhookMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *FakeTeam) FindWebhookCallCount() int {
+	fake.findWebhookMutex.RLock()
+	defer fake.findWebhookMutex.RUnlock()
+	return len(fake.findWebhookArgsForCall)
+}
+
+func (fake *FakeTeam) FindWebhookCalls(stub func(string) (db.Webhook, bool, error)) {
+	fake.findWebhookMutex.Lock()
+	defer fake.findWebhookMutex.Unlock()
+	fake.FindWebhookStub = stub
+}
+
+func (fake *FakeTeam) FindWebhookArgsForCall(i int) string {
+	fake.findWebhookMutex.RLock()
+	defer fake.findWebhookMutex.RUnlock()
+	argsForCall := fake.findWebhookArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTeam) FindWebhookReturns(result1 db.Webhook, result2 bool, result3 error) {
+	fake.findWebhookMutex.Lock()
+	defer fake.findWebhookMutex.Unlock()
+	fake.FindWebhookStub = nil
+	fake.findWebhookReturns = struct {
+		result1 db.Webhook
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeTeam) FindWebhookReturnsOnCall(i int, result1 db.Webhook, result2 bool, result3 error) {
+	fake.findWebhookMutex.Lock()
+	defer fake.findWebhookMutex.Unlock()
+	fake.FindWebhookStub = nil
+	if fake.findWebhookReturnsOnCall == nil {
+		fake.findWebhookReturnsOnCall = make(map[int]struct {
+			result1 db.Webhook
+			result2 bool
+			result3 error
+		})
+	}
+	fake.findWebhookReturnsOnCall[i] = struct {
+		result1 db.Webhook
 		result2 bool
 		result3 error
 	}{result1, result2, result3}
@@ -2247,6 +2583,70 @@ func (fake *FakeTeam) SavePipelineReturnsOnCall(i int, result1 db.Pipeline, resu
 	}{result1, result2, result3}
 }
 
+func (fake *FakeTeam) SaveWebhook(arg1 db.WebhookConfig) (db.Webhook, error) {
+	fake.saveWebhookMutex.Lock()
+	ret, specificReturn := fake.saveWebhookReturnsOnCall[len(fake.saveWebhookArgsForCall)]
+	fake.saveWebhookArgsForCall = append(fake.saveWebhookArgsForCall, struct {
+		arg1 db.WebhookConfig
+	}{arg1})
+	stub := fake.SaveWebhookStub
+	fakeReturns := fake.saveWebhookReturns
+	fake.recordInvocation("SaveWebhook", []interface{}{arg1})
+	fake.saveWebhookMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTeam) SaveWebhookCallCount() int {
+	fake.saveWebhookMutex.RLock()
+	defer fake.saveWebhookMutex.RUnlock()
+	return len(fake.saveWebhookArgsForCall)
+}
+
+func (fake *FakeTeam) SaveWebhookCalls(stub func(db.WebhookConfig) (db.Webhook, error)) {
+	fake.saveWebhookMutex.Lock()
+	defer fake.saveWebhookMutex.Unlock()
+	fake.SaveWebhookStub = stub
+}
+
+func (fake *FakeTeam) SaveWebhookArgsForCall(i int) db.WebhookConfig {
+	fake.saveWebhookMutex.RLock()
+	defer fake.saveWebhookMutex.RUnlock()
+	argsForCall := fake.saveWebhookArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTeam) SaveWebhookReturns(result1 db.Webhook, result2 error) {
+	fake.saveWebhookMutex.Lock()
+	defer fake.saveWebhookMutex.Unlock()
+	fake.SaveWebhookStub = nil
+	fake.saveWebhookReturns = struct {
+		result1 db.Webhook
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTeam) SaveWebhookReturnsOnCall(i int, result1 db.Webhook, result2 error) {
+	fake.saveWebhookMutex.Lock()
+	defer fake.saveWebhookMutex.Unlock()
+	fake.SaveWebhookStub = nil
+	if fake.saveWebhookReturnsOnCall == nil {
+		fake.saveWebhookReturnsOnCall = make(map[int]struct {
+			result1 db.Webhook
+			result2 error
+		})
+	}
+	fake.saveWebhookReturnsOnCall[i] = struct {
+		result1 db.Webhook
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *FakeTeam) SaveWorker(arg1 atc.Worker, arg2 time.Duration) (db.Worker, error) {
 	fake.saveWorkerMutex.Lock()
 	ret, specificReturn := fake.saveWorkerReturnsOnCall[len(fake.saveWorkerArgsForCall)]
@@ -2371,6 +2771,62 @@ func (fake *FakeTeam) UpdateProviderAuthReturnsOnCall(i int, result1 error) {
 	fake.updateProviderAuthReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *FakeTeam) Webhooks() ([]db.Webhook, error) {
+	fake.webhooksMutex.Lock()
+	ret, specificReturn := fake.webhooksReturnsOnCall[len(fake.webhooksArgsForCall)]
+	fake.webhooksArgsForCall = append(fake.webhooksArgsForCall, struct {
+	}{})
+	stub := fake.WebhooksStub
+	fakeReturns := fake.webhooksReturns
+	fake.recordInvocation("Webhooks", []interface{}{})
+	fake.webhooksMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTeam) WebhooksCallCount() int {
+	fake.webhooksMutex.RLock()
+	defer fake.webhooksMutex.RUnlock()
+	return len(fake.webhooksArgsForCall)
+}
+
+func (fake *FakeTeam) WebhooksCalls(stub func() ([]db.Webhook, error)) {
+	fake.webhooksMutex.Lock()
+	defer fake.webhooksMutex.Unlock()
+	fake.WebhooksStub = stub
+}
+
+func (fake *FakeTeam) WebhooksReturns(result1 []db.Webhook, result2 error) {
+	fake.webhooksMutex.Lock()
+	defer fake.webhooksMutex.Unlock()
+	fake.WebhooksStub = nil
+	fake.webhooksReturns = struct {
+		result1 []db.Webhook
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTeam) WebhooksReturnsOnCall(i int, result1 []db.Webhook, result2 error) {
+	fake.webhooksMutex.Lock()
+	defer fake.webhooksMutex.Unlock()
+	fake.WebhooksStub = nil
+	if fake.webhooksReturnsOnCall == nil {
+		fake.webhooksReturnsOnCall = make(map[int]struct {
+			result1 []db.Webhook
+			result2 error
+		})
+	}
+	fake.webhooksReturnsOnCall[i] = struct {
+		result1 []db.Webhook
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeTeam) Workers() ([]db.Worker, error) {
