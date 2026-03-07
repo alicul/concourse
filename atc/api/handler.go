@@ -25,6 +25,7 @@ import (
 	"github.com/concourse/concourse/atc/api/usersserver"
 	"github.com/concourse/concourse/atc/api/volumeserver"
 	"github.com/concourse/concourse/atc/api/wallserver"
+	"github.com/concourse/concourse/atc/api/webhookserver"
 	"github.com/concourse/concourse/atc/api/workerserver"
 	"github.com/concourse/concourse/atc/creds"
 	"github.com/concourse/concourse/atc/db"
@@ -117,6 +118,7 @@ func NewHandler(
 		oidcIssuer = externalURL
 	}
 	idTokenServer := idtokenserver.NewServer(logger, oidcIssuer, dbSigningKeyFactory)
+	webhookServerInstance := webhookserver.NewServer(logger, dbTeamFactory, dbCheckFactory, externalURL)
 
 	handlers := map[string]http.Handler{
 		atc.GetConfig:  http.HandlerFunc(configServer.GetConfig),
@@ -241,6 +243,11 @@ func NewHandler(
 
 		atc.GetOpenIDConfiguration: http.HandlerFunc(idTokenServer.OpenIDConfiguration),
 		atc.GetSigningKeys:         http.HandlerFunc(idTokenServer.SigningKeys),
+
+		atc.SetWebhook:     teamHandlerFactory.HandlerFor(webhookServerInstance.SetWebhook),
+		atc.DestroyWebhook: teamHandlerFactory.HandlerFor(webhookServerInstance.DestroyWebhook),
+		atc.ListWebhooks:   teamHandlerFactory.HandlerFor(webhookServerInstance.ListWebhooks),
+		atc.ReceiveWebhook: http.HandlerFunc(webhookServerInstance.ReceiveWebhook),
 	}
 
 	return rata.NewRouter(atc.Routes, wrapper.Wrap(handlers))

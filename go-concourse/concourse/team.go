@@ -81,6 +81,10 @@ type Team interface {
 
 	CreateArtifact(io.Reader, string, []string) (atc.WorkerArtifact, error)
 	GetArtifact(int) (io.ReadCloser, error)
+
+	SetWebhook(webhookName, webhookType, secret string) (atc.Webhook, error)
+	DestroyWebhook(webhookName string) error
+	ListWebhooks() ([]atc.Webhook, error)
 }
 
 type team struct {

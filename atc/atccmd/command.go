@@ -595,6 +595,21 @@ func (cmd *RunCommand) Runner(positionalArguments []string) (ifrit.Runner, error
 		}
 
 		atc.LoadBaseResourceTypeDefaults(defaults)
+
+		// Also parse webhook_matchers from the same YAML
+		var matcherConfig map[string]struct {
+			WebhookMatchers map[string]atc.WebhookMatcher `yaml:"webhook_matchers"`
+		}
+		_ = yaml.Unmarshal(content, &matcherConfig)
+		webhookMatchers := map[string]map[string]atc.WebhookMatcher{}
+		for resourceType, cfg := range matcherConfig {
+			if len(cfg.WebhookMatchers) > 0 {
+				webhookMatchers[resourceType] = cfg.WebhookMatchers
+			}
+		}
+		if len(webhookMatchers) > 0 {
+			atc.LoadWebhookMatchers(webhookMatchers)
+		}
 	}
 
 	err = db.SetNotificationBusQueueSize(cmd.DBNotificationBusQueueSize)

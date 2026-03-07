@@ -80,6 +80,13 @@ type Team interface {
 	FindWorkersForResourceCache(rcId int, shouldBeValidBefore time.Time) ([]Worker, error)
 
 	UpdateProviderAuth(auth atc.TeamAuth) error
+
+	SaveWebhook(name, webhookType, secret string) (Webhook, error)
+	DestroyWebhook(name string) error
+	FindWebhook(name string) (Webhook, bool, error)
+	Webhooks() ([]Webhook, error)
+	FindResourcesByWebhookPayload(webhookType string, payload json.RawMessage) ([]Resource, error)
+	FindResourcesByWebhookType(webhookType string) ([]Resource, error)
 }
 
 type team struct {
@@ -599,6 +606,11 @@ func savePipeline(
 	}
 
 	err = removeUnusedWorkerTaskCaches(tx, pipelineID, config.Jobs)
+	if err != nil {
+		return 0, false, err
+	}
+
+	err = saveResourceWebhookSubscriptions(tx, resourceNameToID, config.Resources)
 	if err != nil {
 		return 0, false, err
 	}
