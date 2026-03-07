@@ -3,10 +3,13 @@ package libcontainerdfakes
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"github.com/concourse/concourse/worker/runtime/libcontainerd"
 	"github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -51,6 +54,34 @@ type FakeClient struct {
 		result1 client.Container
 		result2 error
 	}
+	GetImageStub        func(context.Context, string) (client.Image, error)
+	getImageMutex       sync.RWMutex
+	getImageArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	getImageReturns struct {
+		result1 client.Image
+		result2 error
+	}
+	getImageReturnsOnCall map[int]struct {
+		result1 client.Image
+		result2 error
+	}
+	ImportStub        func(context.Context, io.Reader) ([]images.Image, error)
+	importMutex       sync.RWMutex
+	importArgsForCall []struct {
+		arg1 context.Context
+		arg2 io.Reader
+	}
+	importReturns struct {
+		result1 []images.Image
+		result2 error
+	}
+	importReturnsOnCall map[int]struct {
+		result1 []images.Image
+		result2 error
+	}
 	InitStub        func() error
 	initMutex       sync.RWMutex
 	initArgsForCall []struct {
@@ -77,6 +108,24 @@ type FakeClient struct {
 		result1 client.Container
 		result2 error
 	}
+	NewContainerFromImageStub        func(context.Context, string, map[string]string, client.Image, string, ...oci.SpecOpts) (client.Container, error)
+	newContainerFromImageMutex       sync.RWMutex
+	newContainerFromImageArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]string
+		arg4 client.Image
+		arg5 string
+		arg6 []oci.SpecOpts
+	}
+	newContainerFromImageReturns struct {
+		result1 client.Container
+		result2 error
+	}
+	newContainerFromImageReturnsOnCall map[int]struct {
+		result1 client.Container
+		result2 error
+	}
 	StopStub        func() error
 	stopMutex       sync.RWMutex
 	stopArgsForCall []struct {
@@ -85,6 +134,19 @@ type FakeClient struct {
 		result1 error
 	}
 	stopReturnsOnCall map[int]struct {
+		result1 error
+	}
+	UnpackStub        func(context.Context, client.Image, string) error
+	unpackMutex       sync.RWMutex
+	unpackArgsForCall []struct {
+		arg1 context.Context
+		arg2 client.Image
+		arg3 string
+	}
+	unpackReturns struct {
+		result1 error
+	}
+	unpackReturnsOnCall map[int]struct {
 		result1 error
 	}
 	VersionStub        func(context.Context) error
@@ -294,6 +356,136 @@ func (fake *FakeClient) GetContainerReturnsOnCall(i int, result1 client.Containe
 	}{result1, result2}
 }
 
+func (fake *FakeClient) GetImage(arg1 context.Context, arg2 string) (client.Image, error) {
+	fake.getImageMutex.Lock()
+	ret, specificReturn := fake.getImageReturnsOnCall[len(fake.getImageArgsForCall)]
+	fake.getImageArgsForCall = append(fake.getImageArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.GetImageStub
+	fakeReturns := fake.getImageReturns
+	fake.recordInvocation("GetImage", []interface{}{arg1, arg2})
+	fake.getImageMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeClient) GetImageCallCount() int {
+	fake.getImageMutex.RLock()
+	defer fake.getImageMutex.RUnlock()
+	return len(fake.getImageArgsForCall)
+}
+
+func (fake *FakeClient) GetImageCalls(stub func(context.Context, string) (client.Image, error)) {
+	fake.getImageMutex.Lock()
+	defer fake.getImageMutex.Unlock()
+	fake.GetImageStub = stub
+}
+
+func (fake *FakeClient) GetImageArgsForCall(i int) (context.Context, string) {
+	fake.getImageMutex.RLock()
+	defer fake.getImageMutex.RUnlock()
+	argsForCall := fake.getImageArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeClient) GetImageReturns(result1 client.Image, result2 error) {
+	fake.getImageMutex.Lock()
+	defer fake.getImageMutex.Unlock()
+	fake.GetImageStub = nil
+	fake.getImageReturns = struct {
+		result1 client.Image
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeClient) GetImageReturnsOnCall(i int, result1 client.Image, result2 error) {
+	fake.getImageMutex.Lock()
+	defer fake.getImageMutex.Unlock()
+	fake.GetImageStub = nil
+	if fake.getImageReturnsOnCall == nil {
+		fake.getImageReturnsOnCall = make(map[int]struct {
+			result1 client.Image
+			result2 error
+		})
+	}
+	fake.getImageReturnsOnCall[i] = struct {
+		result1 client.Image
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeClient) Import(arg1 context.Context, arg2 io.Reader) ([]images.Image, error) {
+	fake.importMutex.Lock()
+	ret, specificReturn := fake.importReturnsOnCall[len(fake.importArgsForCall)]
+	fake.importArgsForCall = append(fake.importArgsForCall, struct {
+		arg1 context.Context
+		arg2 io.Reader
+	}{arg1, arg2})
+	stub := fake.ImportStub
+	fakeReturns := fake.importReturns
+	fake.recordInvocation("Import", []interface{}{arg1, arg2})
+	fake.importMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeClient) ImportCallCount() int {
+	fake.importMutex.RLock()
+	defer fake.importMutex.RUnlock()
+	return len(fake.importArgsForCall)
+}
+
+func (fake *FakeClient) ImportCalls(stub func(context.Context, io.Reader) ([]images.Image, error)) {
+	fake.importMutex.Lock()
+	defer fake.importMutex.Unlock()
+	fake.ImportStub = stub
+}
+
+func (fake *FakeClient) ImportArgsForCall(i int) (context.Context, io.Reader) {
+	fake.importMutex.RLock()
+	defer fake.importMutex.RUnlock()
+	argsForCall := fake.importArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeClient) ImportReturns(result1 []images.Image, result2 error) {
+	fake.importMutex.Lock()
+	defer fake.importMutex.Unlock()
+	fake.ImportStub = nil
+	fake.importReturns = struct {
+		result1 []images.Image
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeClient) ImportReturnsOnCall(i int, result1 []images.Image, result2 error) {
+	fake.importMutex.Lock()
+	defer fake.importMutex.Unlock()
+	fake.ImportStub = nil
+	if fake.importReturnsOnCall == nil {
+		fake.importReturnsOnCall = make(map[int]struct {
+			result1 []images.Image
+			result2 error
+		})
+	}
+	fake.importReturnsOnCall[i] = struct {
+		result1 []images.Image
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *FakeClient) Init() error {
 	fake.initMutex.Lock()
 	ret, specificReturn := fake.initReturnsOnCall[len(fake.initArgsForCall)]
@@ -414,6 +606,75 @@ func (fake *FakeClient) NewContainerReturnsOnCall(i int, result1 client.Containe
 	}{result1, result2}
 }
 
+func (fake *FakeClient) NewContainerFromImage(arg1 context.Context, arg2 string, arg3 map[string]string, arg4 client.Image, arg5 string, arg6 ...oci.SpecOpts) (client.Container, error) {
+	fake.newContainerFromImageMutex.Lock()
+	ret, specificReturn := fake.newContainerFromImageReturnsOnCall[len(fake.newContainerFromImageArgsForCall)]
+	fake.newContainerFromImageArgsForCall = append(fake.newContainerFromImageArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]string
+		arg4 client.Image
+		arg5 string
+		arg6 []oci.SpecOpts
+	}{arg1, arg2, arg3, arg4, arg5, arg6})
+	stub := fake.NewContainerFromImageStub
+	fakeReturns := fake.newContainerFromImageReturns
+	fake.recordInvocation("NewContainerFromImage", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6})
+	fake.newContainerFromImageMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6...)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeClient) NewContainerFromImageCallCount() int {
+	fake.newContainerFromImageMutex.RLock()
+	defer fake.newContainerFromImageMutex.RUnlock()
+	return len(fake.newContainerFromImageArgsForCall)
+}
+
+func (fake *FakeClient) NewContainerFromImageCalls(stub func(context.Context, string, map[string]string, client.Image, string, ...oci.SpecOpts) (client.Container, error)) {
+	fake.newContainerFromImageMutex.Lock()
+	defer fake.newContainerFromImageMutex.Unlock()
+	fake.NewContainerFromImageStub = stub
+}
+
+func (fake *FakeClient) NewContainerFromImageArgsForCall(i int) (context.Context, string, map[string]string, client.Image, string, []oci.SpecOpts) {
+	fake.newContainerFromImageMutex.RLock()
+	defer fake.newContainerFromImageMutex.RUnlock()
+	argsForCall := fake.newContainerFromImageArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
+}
+
+func (fake *FakeClient) NewContainerFromImageReturns(result1 client.Container, result2 error) {
+	fake.newContainerFromImageMutex.Lock()
+	defer fake.newContainerFromImageMutex.Unlock()
+	fake.NewContainerFromImageStub = nil
+	fake.newContainerFromImageReturns = struct {
+		result1 client.Container
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeClient) NewContainerFromImageReturnsOnCall(i int, result1 client.Container, result2 error) {
+	fake.newContainerFromImageMutex.Lock()
+	defer fake.newContainerFromImageMutex.Unlock()
+	fake.NewContainerFromImageStub = nil
+	if fake.newContainerFromImageReturnsOnCall == nil {
+		fake.newContainerFromImageReturnsOnCall = make(map[int]struct {
+			result1 client.Container
+			result2 error
+		})
+	}
+	fake.newContainerFromImageReturnsOnCall[i] = struct {
+		result1 client.Container
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *FakeClient) Stop() error {
 	fake.stopMutex.Lock()
 	ret, specificReturn := fake.stopReturnsOnCall[len(fake.stopArgsForCall)]
@@ -463,6 +724,69 @@ func (fake *FakeClient) StopReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.stopReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeClient) Unpack(arg1 context.Context, arg2 client.Image, arg3 string) error {
+	fake.unpackMutex.Lock()
+	ret, specificReturn := fake.unpackReturnsOnCall[len(fake.unpackArgsForCall)]
+	fake.unpackArgsForCall = append(fake.unpackArgsForCall, struct {
+		arg1 context.Context
+		arg2 client.Image
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.UnpackStub
+	fakeReturns := fake.unpackReturns
+	fake.recordInvocation("Unpack", []interface{}{arg1, arg2, arg3})
+	fake.unpackMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeClient) UnpackCallCount() int {
+	fake.unpackMutex.RLock()
+	defer fake.unpackMutex.RUnlock()
+	return len(fake.unpackArgsForCall)
+}
+
+func (fake *FakeClient) UnpackCalls(stub func(context.Context, client.Image, string) error) {
+	fake.unpackMutex.Lock()
+	defer fake.unpackMutex.Unlock()
+	fake.UnpackStub = stub
+}
+
+func (fake *FakeClient) UnpackArgsForCall(i int) (context.Context, client.Image, string) {
+	fake.unpackMutex.RLock()
+	defer fake.unpackMutex.RUnlock()
+	argsForCall := fake.unpackArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeClient) UnpackReturns(result1 error) {
+	fake.unpackMutex.Lock()
+	defer fake.unpackMutex.Unlock()
+	fake.UnpackStub = nil
+	fake.unpackReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeClient) UnpackReturnsOnCall(i int, result1 error) {
+	fake.unpackMutex.Lock()
+	defer fake.unpackMutex.Unlock()
+	fake.UnpackStub = nil
+	if fake.unpackReturnsOnCall == nil {
+		fake.unpackReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.unpackReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

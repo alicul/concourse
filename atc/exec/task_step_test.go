@@ -789,9 +789,9 @@ var _ = Describe("TaskStep", func() {
 					repo.RegisterArtifact("some-image-artifact", imageVolume, false)
 				})
 
-				It("returns the error", func() {
+				It("returns the executable not defined error instead of missing metadata.json", func() {
 					Expect(stepErr).To(HaveOccurred())
-					Expect(stepErr.Error()).To(ContainSubstring("file 'metadata.json' not found within artifact 'image-volume'"))
+					Expect(stepErr.Error()).To(ContainSubstring("No executable defined for task. Specify an executable to run in either the task config (run.path) or as an ENTRYPOINT/CMD in the container image."))
 				})
 
 				It("is not successful", func() {

@@ -544,10 +544,8 @@ func (step *TaskStep) getOciEntrypoint(ctx context.Context, imageSpec runtime.Im
 	metadataStream, err := step.streamer.StreamFile(ctx, imageSpec.ImageArtifact, "metadata.json")
 	if err != nil {
 		if err == baggageclaim.ErrFileNotFound {
-			return path, args, FileNotFoundError{
-				Name:     imageSpec.ImageArtifact.Handle(),
-				FilePath: "metadata.json",
-			}
+			// OCI images without metadata.json are acceptable for Windows
+			return path, args, nil
 		}
 		return path, args, err
 	}

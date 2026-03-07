@@ -3,9 +3,12 @@ package libcontainerd
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -71,6 +74,29 @@ type Client interface {
 	// a timeout period (default 10 seconds).
 	//
 	Destroy(ctx context.Context, handle string) error
+
+	// Import imports an image from a tar stream
+	//
+	Import(ctx context.Context, reader io.Reader) ([]images.Image, error)
+
+	// GetImage retrieves an image by reference
+	//
+	GetImage(ctx context.Context, ref string) (containerd.Image, error)
+
+	// Unpack unpacks the image into the snapshotter
+	//
+	Unpack(ctx context.Context, image containerd.Image, snapshotter string) error
+
+	// NewContainerFromImage creates a container in containerd based on an image object.
+	//
+	NewContainerFromImage(
+		ctx context.Context,
+		id string,
+		labels map[string]string,
+		image containerd.Image,
+		snapshotter string,
+		opts ...oci.SpecOpts,
+	) (containerd.Container, error)
 }
 
 type client struct {
@@ -170,4 +196,42 @@ func (c *client) Destroy(ctx context.Context, handle string) error {
 	}
 
 	return container.Delete(ctx)
+}
+
+func (c *client) Import(ctx context.Context, reader io.Reader) ([]images.Image, error) {
+	ctx, cancel := createTimeoutContext(ctx, c.requestTimeout)
+	defer cancel()
+
+	return c.containerd.Import(ctx, reader, containerd.WithAllPlatforms(true))
+}
+
+func (c *client) GetImage(ctx context.Context, ref string) (containerd.Image, error) {
+	ctx, cancel := createTimeoutContext(ctx, c.requestTimeout)
+	defer cancel()
+
+	return c.containerd.GetImage(ctx, ref)
+}
+
+func (c *client) Unpack(ctx context.Context, image containerd.Image, snapshotter string) error {
+	ctx, cancel := createTimeoutContext(ctx, c.requestTimeout)
+	defer cancel()
+
+	return image.Unpack(ctx, snapshotter)
+}
+
+func (c *client) NewContainerFromImage(
+	ctx context.Context, id string, labels map[string]string, image containerd.Image, snapshotter string, opts ...oci.SpecOpts,
+) (containerd.Container, error) {
+	ctx, cancel := createTimeoutContext(ctx, c.requestTimeout)
+	defer cancel()
+
+	specOpts := append([]oci.SpecOpts{oci.WithImageConfig(image)}, opts...)
+
+	return c.containerd.NewContainer(ctx, id,
+		containerd.WithImage(image),
+		containerd.WithSnapshotter(snapshotter),
+		containerd.WithNewSnapshot(id, image),
+		containerd.WithNewSpec(specOpts...),
+		containerd.WithContainerLabels(labels),
+	)
 }
