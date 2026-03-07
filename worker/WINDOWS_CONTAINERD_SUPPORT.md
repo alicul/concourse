@@ -98,22 +98,35 @@ The Windows `GardenBackend` struct is simpler than the Linux version:
 //   seccompProfile, seccompProfileFuse, allowedDevices,
 //   userNamespace, initBinPath, ociHooksDir, etc.
 
-// Windows GardenBackend has 4 fields:
+// Windows GardenBackend has 7 fields:
 type GardenBackend struct {
-    client         libcontainerd.Client
-    maxContainers  int
-    requestTimeout time.Duration
-    dnsServers     []string
+    client            libcontainerd.Client
+    imageClient       ImageClient
+    maxContainers     int
+    requestTimeout    time.Duration
+    dnsServers        []string
+    workDir           string
+    hypervIsolation   bool
 }
 ```
 
-**Reasoning**: The removed fields correspond to Linux-only features. Adding them would create unused configuration that misleads operators.
+**Reasoning**: The removed fields correspond to Linux-only features. The `imageClient` and `workDir` fields were added for OCI image import support, and `hypervIsolation` controls whether containers use Hyper-V isolation (see below).
 
-The `Create()` method follows a simpler flow than the Linux version:
+The `Create()` method detects whether the volume contains an OCI tarball (`image.tar`) or an extracted rootfs, and routes accordingly:
+
 1. Check container capacity
-2. Generate Windows OCI spec (no seccomp, no user namespace mapping)
-3. Create container via containerd
-4. Create and start a task (no network namespace setup, no hermetic container traffic rules)
+2. Resolve the rootfs path from the Garden spec
+3. Check if `image.tar` exists in the volume directory
+4. **If `image.tar` exists** → `createFromOCITarball()`:
+   - Import the OCI tarball into containerd's content store
+   - Unpack image layers using the `windows` snapshotter
+   - Create container from the image with `WithNewSnapshot`
+   - Apply OCI spec options (process args, user, mounts, network, optional Hyper-V isolation)
+   - Create and start the task
+5. **If no `image.tar`** → `createFromRootFS()` (original path):
+   - Generate Windows OCI spec directly with layer folders
+   - Create container via containerd
+   - Create and start a task
 
 The `Destroy()` method sends a kill signal and waits up to 10 seconds before force-deleting. The Linux version has a more elaborate graceful/ungraceful kill cycle with individual process targeting — this simpler approach is appropriate for Windows where process groups work differently.
 
@@ -207,32 +220,82 @@ The `garden_server_runner.go` is also **shared** — it wraps any `garden.Backen
 | `CONCOURSE_CONTAINERD_REQUEST_TIMEOUT` | Timeout for containerd requests | `5m` |
 | `CONCOURSE_CONTAINERD_MAX_CONTAINERS` | Maximum container count | `250` |
 | `CONCOURSE_CONTAINERD_DNS_SERVER` | DNS server for containers | System default |
+| `CONCOURSE_CONTAINERD_HYPERV_ISOLATION` | Use Hyper-V isolation instead of process isolation | `false` |
 
 ### Example Usage
 
 ```powershell
-# Start a Concourse worker with containerd runtime on Windows
+# Start a Concourse worker with containerd runtime on Windows (process isolation)
 concourse.exe worker `
     --work-dir C:\concourse `
     --runtime containerd `
     --tsa-host ci.example.com:2222 `
     --tsa-public-key tsa-host-key.pub `
     --tsa-worker-private-key worker-key
+
+# With Hyper-V isolation (when host OS build doesn't match container image)
+concourse.exe worker `
+    --work-dir C:\concourse `
+    --runtime containerd `
+    --containerd-hyperv-isolation `
+    --tsa-host ci.example.com:2222 `
+    --tsa-public-key tsa-host-key.pub `
+    --tsa-worker-private-key worker-key
+```
+
+## OCI Image Import Support
+
+The Windows backend supports importing OCI image tarballs produced by the `registry-image` resource's `format: oci` mode. This avoids the need to pre-extract container images or pull them twice.
+
+### How It Works
+
+When a Concourse task uses `image:` with a `registry-image` resource configured with `params: { format: oci }`, the resource outputs an `image.tar` file (a Docker-save-compatible OCI tarball). The ATC streams this volume to the Windows worker. The backend then:
+
+1. **Detects** the `image.tar` file in the streamed volume directory
+2. **Imports** the tarball into containerd's content store via `client.Import()` with `WithAllPlatforms(true)` to bypass platform filtering
+3. **Unpacks** the image layers using the `windows` snapshotter, which properly handles NTFS metadata and Windows-specific layer structures
+4. **Creates** the container from the unpacked image using `WithNewSnapshot`, letting containerd manage the rootfs and layer folders natively
+
+This is critical because Windows containers require proper HCS layer management (base layer + scratch layer), and the `rootfs` format (which extracts to a flat directory) loses NTFS metadata needed by HCS. The OCI tarball preserves the original compressed layer blobs.
+
+### ATC Metadata Fallback
+
+The `oci` format does not produce a `metadata.json` file (which the `rootfs` format creates with image environment variables and user). The ATC's `fetchImageForContainer` was modified to gracefully handle this: if `metadata.json` is missing, it logs an info message and proceeds with empty metadata. This is safe because the backend applies the image config directly via `oci.WithImageConfig(image)`.
+
+### Hyper-V Isolation
+
+Windows process isolation requires the container image OS build to match the host OS build exactly. When running on a host with a different build (e.g., a Windows Insider build), containers will fail to start with `hcs::System::Start: The virtual machine or container exited unexpectedly`.
+
+The `--containerd-hyperv-isolation` flag enables Hyper-V isolation, which runs each container inside a lightweight VM. This bypasses the build-matching requirement entirely, at the cost of slightly higher resource usage. Hyper-V must be enabled on the host.
+
+- **Process isolation** (default): Best performance, requires matching OS builds. Use on Windows Server where the AMI/image matches the container base image.
+- **Hyper-V isolation** (`--containerd-hyperv-isolation`): Runs containers in lightweight VMs. Use on development machines or when OS builds don't match.
+
+### ImageClient Interface
+
+The OCI import functionality is exposed through the `ImageClient` interface, implemented by the `libcontainerd` client:
+
+```go
+type ImageClient interface {
+    ImportImage(ctx context.Context, reader io.Reader, refName string) (images.Image, error)
+    GetImage(ctx context.Context, ref string) (containerd.Image, error)
+    UnpackImage(ctx context.Context, image containerd.Image, snapshotter string) error
+    NewContainerFromImage(ctx context.Context, id string, image containerd.Image,
+        labels map[string]string, snapshotter string, specOpts ...oci.SpecOpts) (containerd.Container, error)
+}
 ```
 
 ## Future Work
 
 1. **HNS Network Integration**: The current implementation uses containerd's default Windows networking. A full HNS integration would allow network isolation, port mapping, and traffic filtering similar to the Linux CNI backend.
 
-2. **Windows Container Image Support**: The current `raw://` rootfs scheme works for pre-extracted container images. Adding support for pulling Windows container images from registries would improve usability.
+2. **Resource Monitoring**: The `Capacity()`, `Metrics()`, and `BulkMetrics()` methods are not implemented. These could be implemented using Windows Performance Counters and Job Object queries.
 
-3. **Resource Monitoring**: The `Capacity()`, `Metrics()`, and `BulkMetrics()` methods are not implemented. These could be implemented using Windows Performance Counters and Job Object queries.
+3. **Init Binary**: Creating a dedicated Windows init binary (similar to Linux's `gdn-init`) would provide cleaner process lifecycle management. The current `ping -t` approach is functional but inelegant.
 
-4. **Init Binary**: Creating a dedicated Windows init binary (similar to Linux's `gdn-init`) would provide cleaner process lifecycle management. The current `ping -t` approach is functional but inelegant.
+4. **Process I/O Management**: The Linux backend has a sophisticated `IOManager` that prevents multiple readers from attaching to the same FIFO files. The Windows backend currently uses simpler I/O handling. A similar manager could be added if I/O issues are observed.
 
-5. **Process I/O Management**: The Linux backend has a sophisticated `IOManager` that prevents multiple readers from attaching to the same FIFO files. The Windows backend currently uses simpler I/O handling. A similar manager could be added if I/O issues are observed.
-
-6. **Integration Tests**: The Linux backend has integration tests in `worker/runtime/integration/`. Equivalent tests should be created for the Windows backend.
+5. **Integration Tests**: The Linux backend has integration tests in `worker/runtime/integration/`. Equivalent tests should be created for the Windows backend.
 
 ## Architecture Diagram
 
@@ -284,28 +347,32 @@ Concourse used containerd as the default runtime for Linux workers but only supp
 
 Rather than refactoring the heavily Linux-coupled `worker/runtime/` package (which uses cgroups, seccomp, user namespaces, CNI, iptables, etc.), a **separate Windows containerd backend package** was created -- consistent with how Houdini is also a separate package. This minimizes risk to the existing Linux code while enabling containerd on Windows.
 
-### Files Modified (1)
+### Files Modified (3)
 
 - **`worker/workercmd/worker_nonlinux.go`** -- Build tag changed from `//go:build !linux` to `//go:build darwin`, since Windows now has its own file
+- **`worker/runtime/libcontainerd/client.go`** -- Added `ImportImage`, `GetImage`, `UnpackImage`, and `NewContainerFromImage` methods for OCI image import and container-from-image creation
+- **`atc/worker/gardenruntime/image.go`** -- Modified `fetchImageForContainer` to gracefully handle missing `metadata.json` (falls back to empty metadata instead of failing), enabling the `oci` format for image resources
 
-### Files Created (7)
+### Files Created (7+)
 
 **Worker command layer:**
 
-- **`worker/workercmd/worker_windows.go`** -- Windows worker command with `--runtime` flag supporting `containerd` and `houdini` (defaulting to `houdini` for backward compatibility)
-- **`worker/workercmd/containerd_windows.go`** -- Windows containerd runner that starts the containerd daemon via named pipe (`\\.\pipe\concourse-containerd`) and creates the Garden server
+- **`worker/workercmd/worker_windows.go`** -- Windows worker command with `--runtime` flag supporting `containerd` and `houdini` (defaulting to `houdini` for backward compatibility). Includes `--containerd-hyperv-isolation` flag.
+- **`worker/workercmd/containerd_windows.go`** -- Windows containerd runner that starts the containerd daemon via named pipe (`\\.\pipe\concourse-containerd`), creates the Garden server, and wires the `ImageClient` for OCI import support
 
 **Windows containerd backend package (`worker/runtime/windowscontainerd/`):**
 
-- **`backend.go`** -- `GardenBackend` implementing `garden.Backend` for Windows containers, reusing the cross-platform `libcontainerd` client
+- **`backend.go`** -- `GardenBackend` implementing `garden.Backend` for Windows containers. Supports two container creation paths: `createFromOCITarball` (imports OCI tarball, unpacks with Windows snapshotter, creates container from image) and `createFromRootFS` (uses pre-extracted rootfs with explicit layer folders). Includes configurable Hyper-V isolation.
 - **`container.go`** -- `Container` implementing `garden.Container` with Windows-appropriate defaults (Windows paths, `ContainerAdministrator` user, Windows memory limits via `spec.Windows.Resources`)
 - **`process.go`** -- `Process` implementing `garden.Process` (containerd's process API is cross-platform)
 - **`spec.go`** -- Windows OCI spec generation using `specs.Windows` (Job Objects for resource limits, HNS for networking) instead of `specs.Linux` (cgroups, seccomp, namespaces)
 - **`signals.go`** -- Signal constants for Windows process management
+- **`backend_test.go`** -- Unit tests covering OCI tarball detection, import, fallback to rootfs, and error handling
 
-**Documentation:**
+**Pipeline and documentation:**
 
-- **`worker/WINDOWS_CONTAINERD_SUPPORT.md`** -- This file: detailed rationale for every design decision, architecture diagram, configuration reference, and future work items
+- **`worker/windows-hello-world.yml`** -- Sample pipeline using `registry-image` with `format: oci` and `nanoserver:ltsc2025`
+- **`worker/WINDOWS_CONTAINERD_SUPPORT.md`** -- This file
 
 ### Build Verification
 
@@ -550,7 +617,7 @@ fly -t local unpause-pipeline -p windows-hello
 fly -t local trigger-job -j windows-hello/hello-windows -w
 ```
 
-The pipeline uses `mcr.microsoft.com/windows/nanoserver:ltsc2022`. If your Windows host is running an older version (e.g., Windows Server 2019), change the tag to `ltsc2019` in the pipeline file — Windows containers require the container OS version to match the host kernel version.
+The pipeline uses `mcr.microsoft.com/windows/nanoserver:ltsc2025` with `format: oci`, which produces an OCI tarball that the Windows backend imports into containerd natively. If your Windows host is running an older version (e.g., Windows Server 2022), change the tag to `ltsc2022` in the pipeline file. Windows containers with process isolation require the container OS build to match the host kernel build; use `--containerd-hyperv-isolation` if they don't match.
 
 ### Troubleshooting
 
@@ -559,6 +626,18 @@ The pipeline uses `mcr.microsoft.com/windows/nanoserver:ltsc2022`. If your Windo
 **containerd fails to start**: Ensure the Containers Windows feature is enabled and you are running as Administrator. Check that Docker Desktop's containerd is not using the same pipe name (it should not, since we use `concourse-containerd`).
 
 **Container creation fails**: Ensure `containerd-shim-runhcs-v1.exe` is installed in the same directory as `containerd.exe` or is available in `%PATH%`. Without this shim, containerd cannot create Windows containers. Verify with `Get-ChildItem C:\containerd\bin\` — you should see both `containerd.exe` and `containerd-shim-runhcs-v1.exe`.
+
+**`hcs::System::Start ... The virtual machine or container exited unexpectedly`**: This usually means the container image OS build doesn't match the host OS build. Check your Windows build with `[System.Environment]::OSVersion.Version` and ensure the nanoserver tag matches:
+
+| Host OS | Build | nanoserver tag |
+|---------|-------|----------------|
+| Windows Server 2025 / Win 11 24H2 | 26100 | `ltsc2025` |
+| Windows Server 2022 | 20348 | `ltsc2022` |
+| Windows Server 2019 / Win 10 1809 | 17763 | `1809` |
+
+If your build doesn't match any published image (e.g., Windows Insider builds), use `--containerd-hyperv-isolation` to run containers in lightweight Hyper-V VMs. This requires Hyper-V to be enabled (`Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V`).
+
+**`import image: image might be filtered out`**: The OCI tarball import failed platform filtering. This should be resolved by `WithAllPlatforms(true)` in the import call. If it persists, verify the image tarball contains valid Windows manifests.
 
 **Web UI loads a blank page**: The Elm frontend has not been compiled. Run `yarn install && yarn build` in the concourse repo root in WSL. The web container mounts `web/public/` from your local checkout, so the built assets will be served immediately after a browser refresh — no container restart needed.
 

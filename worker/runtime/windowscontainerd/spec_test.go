@@ -1,6 +1,7 @@
 package windowscontainerd_test
 
 import (
+	"runtime"
 	"testing"
 
 	"code.cloudfoundry.org/garden"
@@ -138,6 +139,10 @@ func (s *SpecSuite) TestOciSpecProperties() {
 }
 
 func (s *SpecSuite) TestOciSpecBindMounts() {
+	if runtime.GOOS != "windows" {
+		s.T().Skip("bind mount path conversion requires Windows")
+	}
+
 	for _, tc := range []struct {
 		desc     string
 		mounts   []garden.BindMount
@@ -218,6 +223,10 @@ func (s *SpecSuite) TestOciSpecBindMounts() {
 }
 
 func (s *SpecSuite) TestOciSpecBindMountOptions() {
+	if runtime.GOOS != "windows" {
+		s.T().Skip("bind mount path conversion requires Windows")
+	}
+
 	spec := garden.ContainerSpec{
 		Handle:     "handle",
 		RootFSPath: "raw:///rootfs",

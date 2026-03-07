@@ -24,11 +24,12 @@ type GuardianRuntime struct {
 }
 
 type ContainerdRuntime struct {
-	Config         flag.File     `long:"config"          description:"Path to a config file to use for the Containerd daemon."`
-	Bin            string        `long:"bin"             description:"Path to a containerd executable (non-absolute names get resolved from %%PATH%%)."`
-	LogLevel       string        `long:"log-level" default:"info" description:"Minimum level of logs to see." choice:"trace" choice:"debug" choice:"info" choice:"warn" choice:"error" choice:"fatal" choice:"panic"`
-	RequestTimeout time.Duration `long:"request-timeout" default:"5m" description:"How long to wait for requests to Containerd to complete. 0 means no timeout."`
-	MaxContainers  int           `long:"max-containers" default:"250" description:"Max container capacity. 0 means no limit."`
+	Config           flag.File     `long:"config"          description:"Path to a config file to use for the Containerd daemon."`
+	Bin              string        `long:"bin"             description:"Path to a containerd executable (non-absolute names get resolved from %%PATH%%)."`
+	LogLevel         string        `long:"log-level" default:"info" description:"Minimum level of logs to see." choice:"trace" choice:"debug" choice:"info" choice:"warn" choice:"error" choice:"fatal" choice:"panic"`
+	RequestTimeout   time.Duration `long:"request-timeout" default:"5m" description:"How long to wait for requests to Containerd to complete. 0 means no timeout."`
+	MaxContainers    int           `long:"max-containers" default:"250" description:"Max container capacity. 0 means no limit."`
+	HyperVIsolation  bool          `long:"hyperv-isolation" description:"Run containers with Hyper-V isolation instead of process isolation. Required when the host OS build doesn't match the container image build. Requires Hyper-V to be enabled."`
 
 	Network struct {
 		DNSServers []string `long:"dns-server" description:"DNS server IP address to use instead of automatically determined servers. Can be specified multiple times."`

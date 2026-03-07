@@ -15,6 +15,7 @@ package windowscontainerd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,9 +26,23 @@ import (
 	"code.cloudfoundry.org/garden"
 	"github.com/concourse/concourse/worker/runtime/libcontainerd"
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/containerd/containerd/v2/pkg/cio"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
+
+// ImageClient provides containerd image import and container-from-image
+// creation. Implemented by *libcontainerd.client but kept as an interface
+// for testability.
+type ImageClient interface {
+	ImportImage(ctx context.Context, reader io.Reader, refName string) (images.Image, error)
+	GetImage(ctx context.Context, ref string) (containerd.Image, error)
+	UnpackImage(ctx context.Context, image containerd.Image, snapshotter string) error
+	NewContainerFromImage(ctx context.Context, id string, image containerd.Image, labels map[string]string, snapshotter string, specOpts ...oci.SpecOpts) (containerd.Container, error)
+}
 
 type GardenBackendOpt func(b *GardenBackend)
 
@@ -35,11 +50,13 @@ type GardenBackendOpt func(b *GardenBackend)
 // Unlike the Linux backend, this does not use seccomp, user namespaces,
 // Linux capabilities, or cgroup-based resource control.
 type GardenBackend struct {
-	client         libcontainerd.Client
-	maxContainers  int
-	requestTimeout time.Duration
-	dnsServers     []string
-	workDir        string
+	client            libcontainerd.Client
+	imageClient       ImageClient
+	maxContainers     int
+	requestTimeout    time.Duration
+	dnsServers        []string
+	workDir           string
+	hypervIsolation   bool
 }
 
 var _ garden.Backend = (*GardenBackend)(nil)
@@ -65,6 +82,18 @@ func WithDNSServers(servers []string) GardenBackendOpt {
 func WithWorkDir(dir string) GardenBackendOpt {
 	return func(b *GardenBackend) {
 		b.workDir = dir
+	}
+}
+
+func WithImageClient(ic ImageClient) GardenBackendOpt {
+	return func(b *GardenBackend) {
+		b.imageClient = ic
+	}
+}
+
+func WithHyperVIsolation(enabled bool) GardenBackendOpt {
+	return func(b *GardenBackend) {
+		b.hypervIsolation = enabled
 	}
 }
 
@@ -102,12 +131,38 @@ func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, 
 		return nil, err
 	}
 
+	rootfsPath, err := resolveRootFSPath(gdnSpec)
+	if err != nil {
+		return nil, fmt.Errorf("resolve rootfs: %w", err)
+	}
+
+	volumeDir := filepath.Dir(rootfsPath)
+	imageTar := filepath.Join(volumeDir, "image.tar")
+
+	if b.imageClient != nil {
+		if _, statErr := os.Stat(imageTar); statErr == nil {
+			return b.createFromOCITarball(ctx, gdnSpec, imageTar)
+		}
+	}
+
+	return b.createFromRootFS(ctx, gdnSpec, rootfsPath)
+}
+
+func resolveRootFSPath(gdnSpec garden.ContainerSpec) (string, error) {
+	raw := gdnSpec.RootFSPath
+	if raw == "" {
+		raw = gdnSpec.Image.URI
+	}
+	return rootfsDir(raw)
+}
+
+func (b *GardenBackend) createFromRootFS(ctx context.Context, gdnSpec garden.ContainerSpec, rootfsPath string) (garden.Container, error) {
 	scratchDir := filepath.Join(b.workDir, "scratch", gdnSpec.Handle)
 	if err := os.MkdirAll(scratchDir, 0755); err != nil {
 		return nil, fmt.Errorf("create scratch dir: %w", err)
 	}
 
-	oci, err := OciSpec(gdnSpec, scratchDir)
+	ociSpec, err := OciSpec(gdnSpec, scratchDir)
 	if err != nil {
 		return nil, fmt.Errorf("windows oci spec: %w", err)
 	}
@@ -117,7 +172,7 @@ func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, 
 		return nil, fmt.Errorf("convert properties to labels: %w", err)
 	}
 
-	cont, err := b.client.NewContainer(ctx, gdnSpec.Handle, labels, oci)
+	cont, err := b.client.NewContainer(ctx, gdnSpec.Handle, labels, ociSpec)
 	if err != nil {
 		return nil, fmt.Errorf("new container: %w", err)
 	}
@@ -132,6 +187,122 @@ func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, 
 	}
 
 	return NewContainer(cont), nil
+}
+
+func (b *GardenBackend) createFromOCITarball(ctx context.Context, gdnSpec garden.ContainerSpec, imageTarPath string) (garden.Container, error) {
+	volumeDir := filepath.Dir(imageTarPath)
+	refName := readImageRef(volumeDir)
+
+	f, err := os.Open(imageTarPath)
+	if err != nil {
+		return nil, fmt.Errorf("open image tarball: %w", err)
+	}
+	defer f.Close()
+
+	imgMeta, err := b.imageClient.ImportImage(ctx, f, refName)
+	if err != nil {
+		return nil, fmt.Errorf("import image: %w", err)
+	}
+
+	image, err := b.imageClient.GetImage(ctx, imgMeta.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get imported image: %w", err)
+	}
+
+	const snapshotter = "windows"
+	if err := b.imageClient.UnpackImage(ctx, image, snapshotter); err != nil {
+		return nil, fmt.Errorf("unpack image: %w", err)
+	}
+
+	mounts, err := ociSpecBindMounts(gdnSpec.BindMounts)
+	if err != nil {
+		return nil, fmt.Errorf("bind mounts: %w", err)
+	}
+
+	labels, err := propertiesToLabels(gdnSpec.Properties)
+	if err != nil {
+		return nil, fmt.Errorf("convert properties to labels: %w", err)
+	}
+
+	specOpts := []oci.SpecOpts{
+		oci.WithImageConfig(image),
+		oci.WithProcessArgs("cmd.exe", "/S", "/C", "ping -t localhost > NUL"),
+		oci.WithProcessCwd(`C:\`),
+		oci.WithUsername("ContainerAdministrator"),
+		oci.WithHostname(gdnSpec.Handle),
+		oci.WithEnv(gdnSpec.Env),
+		oci.WithMounts(mounts),
+		withWindowsNetworkConfig(),
+	}
+
+	if b.hypervIsolation {
+		specOpts = append(specOpts, withHyperVIsolation())
+	}
+
+	cont, err := b.imageClient.NewContainerFromImage(ctx, gdnSpec.Handle, image, labels, snapshotter, specOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("new container from image: %w", err)
+	}
+
+	task, err := cont.NewTask(ctx, cio.NullIO)
+	if err != nil {
+		return nil, fmt.Errorf("new task: %w", err)
+	}
+
+	if err := task.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start task: %w", err)
+	}
+
+	return NewContainer(cont), nil
+}
+
+// readImageRef reads repository and tag files written by the registry-image
+// resource to construct a containerd image reference name.
+func readImageRef(volumeDir string) string {
+	repo := readFileString(filepath.Join(volumeDir, "repository"))
+	tag := readFileString(filepath.Join(volumeDir, "tag"))
+	if repo == "" {
+		return "imported"
+	}
+	if tag == "" {
+		return repo
+	}
+	return repo + ":" + tag
+}
+
+func readFileString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// withHyperVIsolation enables Hyper-V isolation for the container. This runs
+// the container inside a lightweight VM, which allows running containers whose
+// OS build doesn't match the host build (e.g. nanoserver:ltsc2025 on a newer
+// Windows 11 build). Requires Hyper-V to be enabled on the host.
+func withHyperVIsolation() oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
+		if s.Windows == nil {
+			s.Windows = &specs.Windows{}
+		}
+		s.Windows.HyperV = &specs.WindowsHyperV{}
+		return nil
+	}
+}
+
+// withWindowsNetworkConfig sets AllowUnqualifiedDNSQuery for Windows containers.
+func withWindowsNetworkConfig() oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
+		if s.Windows == nil {
+			s.Windows = &specs.Windows{}
+		}
+		s.Windows.Network = &specs.WindowsNetwork{
+			AllowUnqualifiedDNSQuery: true,
+		}
+		return nil
+	}
 }
 
 func (b *GardenBackend) Destroy(handle string) error {

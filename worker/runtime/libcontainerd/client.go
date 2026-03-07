@@ -3,9 +3,13 @@ package libcontainerd
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/images/archive"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -170,4 +174,54 @@ func (c *client) Destroy(ctx context.Context, handle string) error {
 	}
 
 	return container.Delete(ctx)
+}
+
+// ImportImage imports an OCI image tarball into containerd's content store and
+// returns the resulting image metadata. The refName is used as the image
+// reference (e.g. "mcr.microsoft.com/windows/nanoserver:ltsc2022").
+func (c *client) ImportImage(ctx context.Context, reader io.Reader, refName string) (images.Image, error) {
+	imgs, err := c.containerd.Import(ctx, reader,
+		containerd.WithImageRefTranslator(archive.AddRefPrefix(refName)),
+		containerd.WithAllPlatforms(true),
+	)
+	if err != nil {
+		return images.Image{}, fmt.Errorf("import image: %w", err)
+	}
+	if len(imgs) == 0 {
+		return images.Image{}, fmt.Errorf("import produced no images")
+	}
+	return imgs[0], nil
+}
+
+// GetImage retrieves an image by reference from containerd's image store.
+func (c *client) GetImage(ctx context.Context, ref string) (containerd.Image, error) {
+	return c.containerd.GetImage(ctx, ref)
+}
+
+// UnpackImage unpacks an image's layers using the specified snapshotter
+// (e.g. "windows" on Windows hosts). This must be called before creating
+// containers from the image.
+func (c *client) UnpackImage(ctx context.Context, image containerd.Image, snapshotter string) error {
+	return image.Unpack(ctx, snapshotter)
+}
+
+// NewContainerFromImage creates a container backed by a containerd image and
+// snapshot. Unlike NewContainer which takes a pre-built OCI spec, this method
+// lets containerd manage the rootfs via its snapshot system -- required for
+// Windows containers where HCS needs properly layered images.
+func (c *client) NewContainerFromImage(
+	ctx context.Context,
+	id string,
+	image containerd.Image,
+	labels map[string]string,
+	snapshotter string,
+	specOpts ...oci.SpecOpts,
+) (containerd.Container, error) {
+	return c.containerd.NewContainer(ctx, id,
+		containerd.WithImage(image),
+		containerd.WithNewSnapshot(id, image),
+		containerd.WithSnapshotter(snapshotter),
+		containerd.WithNewSpec(specOpts...),
+		containerd.WithContainerLabels(labels),
+	)
 }

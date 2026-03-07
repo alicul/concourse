@@ -39,12 +39,16 @@ func (cmd *WorkerCommand) containerdGardenServerRunner(
 ) (ifrit.Runner, error) {
 	const graceTime = 0
 
+	containerdClient := libcontainerd.New(containerdAddr, containerdNamespace, cmd.Containerd.RequestTimeout)
+
 	gardenBackend, err := windowscontainerd.NewGardenBackend(
-		libcontainerd.New(containerdAddr, containerdNamespace, cmd.Containerd.RequestTimeout),
+		containerdClient,
 		windowscontainerd.WithRequestTimeout(cmd.Containerd.RequestTimeout),
 		windowscontainerd.WithMaxContainers(cmd.Containerd.MaxContainers),
 		windowscontainerd.WithDNSServers(cmd.Containerd.Network.DNSServers),
 		windowscontainerd.WithWorkDir(cmd.WorkDir.Path()),
+		windowscontainerd.WithImageClient(containerdClient),
+		windowscontainerd.WithHyperVIsolation(cmd.Containerd.HyperVIsolation),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("windows containerd backend init: %w", err)

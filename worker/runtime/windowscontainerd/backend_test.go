@@ -1,7 +1,11 @@
 package windowscontainerd_test
 
 import (
+	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,7 +13,13 @@ import (
 	"github.com/concourse/concourse/worker/runtime/libcontainerd/libcontainerdfakes"
 	"github.com/concourse/concourse/worker/runtime/windowscontainerd"
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
+	"github.com/containerd/platforms"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -318,4 +328,207 @@ func (s *BackendSuite) TestBulkInfo() {
 func (s *BackendSuite) TestBulkMetrics() {
 	_, err := s.backend.BulkMetrics(nil)
 	s.Error(err)
+}
+
+type fakeImage struct {
+	name string
+}
+
+func (f *fakeImage) Name() string                                                    { return f.name }
+func (f *fakeImage) Target() ocispec.Descriptor                                      { return ocispec.Descriptor{} }
+func (f *fakeImage) Labels() map[string]string                                       { return nil }
+func (f *fakeImage) Unpack(_ context.Context, _ string, _ ...containerd.UnpackOpt) error { return nil }
+func (f *fakeImage) RootFS(_ context.Context) ([]digest.Digest, error)               { return nil, nil }
+func (f *fakeImage) Size(_ context.Context) (int64, error)                           { return 0, nil }
+func (f *fakeImage) Usage(_ context.Context, _ ...containerd.UsageOpt) (int64, error) { return 0, nil }
+func (f *fakeImage) Config(_ context.Context) (ocispec.Descriptor, error)            { return ocispec.Descriptor{}, nil }
+func (f *fakeImage) IsUnpacked(_ context.Context, _ string) (bool, error)            { return false, nil }
+func (f *fakeImage) ContentStore() content.Store                                     { return nil }
+func (f *fakeImage) Metadata() images.Image                                          { return images.Image{} }
+func (f *fakeImage) Platform() platforms.MatchComparer                               { return nil }
+func (f *fakeImage) Spec(_ context.Context) (ocispec.Image, error)                   { return ocispec.Image{}, nil }
+
+var _ containerd.Image = (*fakeImage)(nil)
+
+type fakeImageClient struct {
+	importImageCalled bool
+	importImageErr    error
+	importImageResult images.Image
+
+	getImageCalled bool
+	getImageErr    error
+	getImageResult containerd.Image
+
+	unpackCalled bool
+	unpackErr    error
+
+	newContainerCalled bool
+	newContainerErr    error
+	newContainerResult containerd.Container
+}
+
+func (f *fakeImageClient) ImportImage(_ context.Context, _ io.Reader, _ string) (images.Image, error) {
+	f.importImageCalled = true
+	return f.importImageResult, f.importImageErr
+}
+
+func (f *fakeImageClient) GetImage(_ context.Context, _ string) (containerd.Image, error) {
+	f.getImageCalled = true
+	return f.getImageResult, f.getImageErr
+}
+
+func (f *fakeImageClient) UnpackImage(_ context.Context, _ containerd.Image, _ string) error {
+	f.unpackCalled = true
+	return f.unpackErr
+}
+
+func (f *fakeImageClient) NewContainerFromImage(_ context.Context, _ string, _ containerd.Image, _ map[string]string, _ string, _ ...oci.SpecOpts) (containerd.Container, error) {
+	f.newContainerCalled = true
+	return f.newContainerResult, f.newContainerErr
+}
+
+func (s *BackendSuite) setupOCITarballVolume(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	tarPath := filepath.Join(dir, "image.tar")
+	_ = os.WriteFile(tarPath, []byte("fake-oci-tarball"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "repository"), []byte("mcr.microsoft.com/windows/nanoserver"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "tag"), []byte("ltsc2022"), 0644)
+	rootfsDir := filepath.Join(dir, "rootfs")
+	return rootfsDir, tarPath
+}
+
+func (s *BackendSuite) TestCreateDetectsOCITarball() {
+	rootfsDir, _ := s.setupOCITarballVolume(s.T())
+
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+	fakeTask := new(libcontainerdfakes.FakeTask)
+	fakeContainer.NewTaskReturns(fakeTask, nil)
+	fakeContainer.IDReturns("handle")
+
+	imgClient := &fakeImageClient{
+		importImageResult:  images.Image{Name: "mcr.microsoft.com/windows/nanoserver:ltsc2022"},
+		getImageResult:     &fakeImage{name: "mcr.microsoft.com/windows/nanoserver:ltsc2022"},
+		newContainerResult: fakeContainer,
+	}
+
+	backend, err := windowscontainerd.NewGardenBackend(s.client,
+		windowscontainerd.WithImageClient(imgClient),
+	)
+	s.NoError(err)
+
+	spec := garden.ContainerSpec{
+		Handle:     "handle",
+		RootFSPath: "raw://" + rootfsDir,
+	}
+
+	cont, err := backend.Create(spec)
+	s.NoError(err)
+	s.Equal("handle", cont.Handle())
+
+	s.True(imgClient.importImageCalled)
+	s.True(imgClient.getImageCalled)
+	s.True(imgClient.unpackCalled)
+	s.True(imgClient.newContainerCalled)
+	s.Equal(0, s.client.NewContainerCallCount(), "should not use spec-based container creation")
+}
+
+func (s *BackendSuite) TestCreateFallsBackToRootFSWhenNoImageTar() {
+	dir := s.T().TempDir()
+	rootfsDir := filepath.Join(dir, "rootfs")
+	_ = os.MkdirAll(rootfsDir, 0755)
+
+	imgClient := &fakeImageClient{}
+
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+	fakeTask := new(libcontainerdfakes.FakeTask)
+	fakeContainer.NewTaskReturns(fakeTask, nil)
+	s.client.NewContainerReturns(fakeContainer, nil)
+
+	backend, err := windowscontainerd.NewGardenBackend(s.client,
+		windowscontainerd.WithImageClient(imgClient),
+		windowscontainerd.WithWorkDir(s.T().TempDir()),
+	)
+	s.NoError(err)
+
+	spec := garden.ContainerSpec{
+		Handle:     "handle",
+		RootFSPath: "raw://" + rootfsDir,
+	}
+
+	_, err = backend.Create(spec)
+	s.NoError(err)
+
+	s.False(imgClient.importImageCalled, "should not attempt OCI import")
+	s.Equal(1, s.client.NewContainerCallCount(), "should use spec-based container creation")
+}
+
+func (s *BackendSuite) TestCreateOCITarballImportFailure() {
+	rootfsDir, _ := s.setupOCITarballVolume(s.T())
+
+	imgClient := &fakeImageClient{
+		importImageErr: errors.New("import-failed"),
+	}
+
+	backend, err := windowscontainerd.NewGardenBackend(s.client,
+		windowscontainerd.WithImageClient(imgClient),
+	)
+	s.NoError(err)
+
+	spec := garden.ContainerSpec{
+		Handle:     "handle",
+		RootFSPath: "raw://" + rootfsDir,
+	}
+
+	_, err = backend.Create(spec)
+	s.Error(err)
+	s.Contains(err.Error(), "import-failed")
+}
+
+func (s *BackendSuite) TestCreateOCITarballUnpackFailure() {
+	rootfsDir, _ := s.setupOCITarballVolume(s.T())
+
+	imgClient := &fakeImageClient{
+		importImageResult: images.Image{Name: "test-image"},
+		getImageResult:    &fakeImage{name: "test-image"},
+		unpackErr:         errors.New("unpack-failed"),
+	}
+
+	backend, err := windowscontainerd.NewGardenBackend(s.client,
+		windowscontainerd.WithImageClient(imgClient),
+	)
+	s.NoError(err)
+
+	spec := garden.ContainerSpec{
+		Handle:     "handle",
+		RootFSPath: "raw://" + rootfsDir,
+	}
+
+	_, err = backend.Create(spec)
+	s.Error(err)
+	s.Contains(err.Error(), "unpack-failed")
+}
+
+func (s *BackendSuite) TestCreateOCITarballNewContainerFailure() {
+	rootfsDir, _ := s.setupOCITarballVolume(s.T())
+
+	imgClient := &fakeImageClient{
+		importImageResult: images.Image{Name: "test-image"},
+		getImageResult:    &fakeImage{name: "test-image"},
+		newContainerErr:   errors.New("container-create-failed"),
+	}
+
+	backend, err := windowscontainerd.NewGardenBackend(s.client,
+		windowscontainerd.WithImageClient(imgClient),
+	)
+	s.NoError(err)
+
+	spec := garden.ContainerSpec{
+		Handle:     "handle",
+		RootFSPath: "raw://" + rootfsDir,
+	}
+
+	_, err = backend.Create(spec)
+	s.Error(err)
+	s.Contains(err.Error(), "container-create-failed")
 }
