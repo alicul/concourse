@@ -155,7 +155,8 @@ func (a *auditor) ValidateAction(action string) bool {
 		atc.GetTeam,
 		atc.SetWebhook,
 		atc.DestroyWebhook,
-		atc.ListWebhooks:
+		atc.ListWebhooks,
+		atc.ReceiveWebhook:
 		return a.EnableTeamAuditLog
 	case atc.RegisterWorker,
 		atc.LandWorker,

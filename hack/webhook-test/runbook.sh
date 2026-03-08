@@ -37,10 +37,10 @@ $FLY webhooks
 # ─── Step 4: Simulate a GitHub push webhook ──────────────────────────────────
 # Replace <token> with the token from Step 1.
 #
-# This simulates: push to concourse/concourse main branch
+# This simulates: push to concourse/concourse master branch
 # The resource `my-repo` in the pipeline has:
 #   uri: https://github.com/concourse/concourse
-#   branch: main
+#   branch: master
 # So both the URI rule and the branch rule should match → trigger expected.
 
 TOKEN="<replace-with-token-from-set-webhook-output>"
@@ -48,7 +48,7 @@ PAYLOAD='{
   "repository": {
     "full_name": "concourse/concourse"
   },
-  "ref": "refs/heads/main",
+  "ref": "refs/heads/master",
   "pusher": {
     "name": "test-user"
   }
@@ -102,7 +102,7 @@ $FLY set-webhook \
 
 # ─── Step 8: Send signed webhook ─────────────────────────────────────────────
 SECRET="supersecret123"
-PAYLOAD='{"repository":{"full_name":"concourse/concourse"},"ref":"refs/heads/main"}'
+PAYLOAD='{"repository":{"full_name":"concourse/concourse"},"ref":"refs/heads/master"}'
 
 # Compute HMAC-SHA256 signature (same as GitHub does)
 SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print "sha256="$2}')

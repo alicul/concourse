@@ -67,6 +67,7 @@ func (s *Server) SetWebhook(dbTeam db.Team) http.Handler {
 			Secret:          request.Secret,
 			Rules:           request.Rules,
 			SignatureHeader: request.SignatureHeader,
+			SignatureAlgo:   request.SignatureAlgo,
 		})
 		if err != nil {
 			logger.Error("failed-to-save-webhook", err)

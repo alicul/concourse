@@ -257,6 +257,7 @@ func (t *team) FindResourcesByWebhookPayload(webhookType string, payload json.Ra
 	rows, err := resourcesQuery.
 		Join("resource_webhook_subscriptions rws ON rws.resource_id = r.id").
 		Where(sq.Eq{"rws.webhook_type": webhookType, "p.team_id": t.id}).
+		Where("rws.filter::text != '{}'").
 		Where("? @> rws.filter", string(payload)).
 		OrderBy("r.id ASC").
 		RunWith(t.conn).

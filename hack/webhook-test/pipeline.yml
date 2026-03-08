@@ -28,7 +28,7 @@ resources:
     type: git
     source:
       uri: https://github.com/concourse/concourse
-      branch: main
+      branch: master
     # Subscribe to the shared webhook named "github-shared"
     # The webhook matcher config maps URI → repository.full_name
     # and branch → ref, so only pushes to 'main' for this repo will trigger
