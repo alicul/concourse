@@ -1,0 +1,36 @@
+---
+# Shared webhook test pipeline
+# Tests both token-in-URL and HMAC (no-secret) modes
+jobs:
+  - name: on-github-push
+    plan:
+      - get: my-repo
+        trigger: true
+      - task: print-branch
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: {repository: alpine}
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                echo "=== Triggered by shared webhook ==="
+                echo "repo: $(cat my-repo/.git/HEAD 2>/dev/null || echo 'n/a')"
+                ls my-repo/
+          inputs:
+            - name: my-repo
+
+resources:
+  - name: my-repo
+    type: git
+    source:
+      uri: https://github.com/concourse/concourse
+      branch: master
+    # Subscribe to the shared webhook named "github-shared"
+    # The webhook matcher config maps URI → repository.full_name
+    # and branch → ref, so only pushes to 'main' for this repo will trigger
+    webhooks:
+      - type: github

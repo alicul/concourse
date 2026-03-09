@@ -16,11 +16,11 @@ usage() {
 while test $# -gt 0; do
    case "$1" in
         web)
-            container_name="concourse_web_1"
+            container_name="concourse-web-1"
             shift
             ;;
         worker)
-            container_name="concourse_worker_1"
+            container_name="concourse-worker-1"
             shift
             ;;
         --listen)
