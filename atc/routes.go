@@ -122,6 +122,11 @@ const (
 
 	GetOpenIDConfiguration = "GetOpenIDConfiguration"
 	GetSigningKeys         = "GetSigningKeys"
+
+	SetWebhook     = "SetWebhook"
+	DestroyWebhook = "DestroyWebhook"
+	ListWebhooks   = "ListWebhooks"
+	ReceiveWebhook = "ReceiveWebhook"
 )
 
 const (
@@ -251,4 +256,9 @@ var Routes = rata.Routes([]rata.Route{
 
 	{Path: "/.well-known/openid-configuration", Method: "GET", Name: GetOpenIDConfiguration},
 	{Path: "/.well-known/jwks.json", Method: "GET", Name: GetSigningKeys},
+
+	{Path: "/api/v1/teams/:team_name/webhooks", Method: "GET", Name: ListWebhooks},
+	{Path: "/api/v1/teams/:team_name/webhooks/:webhook_name", Method: "PUT", Name: SetWebhook},
+	{Path: "/api/v1/teams/:team_name/webhooks/:webhook_name", Method: "DELETE", Name: DestroyWebhook},
+	{Path: "/api/v1/teams/:team_name/webhooks/:webhook_name", Method: "POST", Name: ReceiveWebhook},
 })
