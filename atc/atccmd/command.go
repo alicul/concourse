@@ -270,6 +270,7 @@ type RunCommand struct {
 	} `group:"Feature Flags"`
 
 	BaseResourceTypeDefaults flag.File `long:"base-resource-type-defaults" description:"Base resource type defaults"`
+	WebhookMatchers          flag.File `long:"webhook-matchers" description:"Path to YAML file defining operator-level webhook matchers (source_field, source_pattern, payload_field, signature_header per resource type and webhook type)."`
 
 	P2pVolumeStreamingTimeout time.Duration `long:"p2p-volume-streaming-timeout" description:"Timeout value of p2p volume streaming" default:"15m"`
 
@@ -595,6 +596,33 @@ func (cmd *RunCommand) Runner(positionalArguments []string) (ifrit.Runner, error
 		}
 
 		atc.LoadBaseResourceTypeDefaults(defaults)
+	}
+
+	if cmd.WebhookMatchers.Path() != "" {
+		content, err := os.ReadFile(cmd.WebhookMatchers.Path())
+		if err != nil {
+			return nil, err
+		}
+		// YAML schema (same structure as per-webhook rules configured via fly set-webhook --rules-file):
+		// <resource-type>:
+		//   <webhook-type>:
+		//     signature_header: X-Hub-Signature-256
+		//     rules:
+		//       - source_field: uri
+		//         source_pattern: "github\.com/(.+?)(?:\.git)?$"
+		//         payload_field: repository.full_name
+		//       - source_field: branch
+		//         payload_field: ref
+		//         payload_pattern: "refs/heads/(.+)"
+		//       - source_field: tag_filter
+		//         payload_field: ref
+		//         payload_pattern: "refs/tags/(.+)"
+		//         source_is_pattern: true
+		matchers := map[string]map[string]atc.WebhookMatcher{}
+		if err := yaml.Unmarshal(content, &matchers); err != nil {
+			return nil, err
+		}
+		atc.LoadWebhookMatchers(matchers)
 	}
 
 	err = db.SetNotificationBusQueueSize(cmd.DBNotificationBusQueueSize)
