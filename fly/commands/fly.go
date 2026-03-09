@@ -94,6 +94,10 @@ type FlyCommand struct {
 	SetWall   SetWallCommand   `command:"set-wall" alias:"sw" description:"Set a wall message"`
 	ClearWall ClearWallCommand `command:"clear-wall" alias:"cw" description:"Clear the wall message"`
 
+	Webhooks       WebhooksCommand       `command:"webhooks" alias:"whs" description:"List the configured webhooks"`
+	SetWebhook     SetWebhookCommand     `command:"set-webhook" alias:"swh" description:"Create or update a shared webhook"`
+	DestroyWebhook DestroyWebhookCommand `command:"destroy-webhook" alias:"dwh" description:"Destroy a shared webhook"`
+
 	Completion CompletionCommand `command:"completion" description:"generate shell completion code"`
 }
 
