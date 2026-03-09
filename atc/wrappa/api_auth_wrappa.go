@@ -97,6 +97,7 @@ func (wrappa *APIAuthWrappa) Wrap(handlers rata.Handlers) rata.Handlers {
 		// unauthenticated / delegating to handler (validate token if provided)
 		case atc.DownloadCLI,
 			atc.CheckResourceWebHook,
+			atc.ReceiveWebhook,
 			atc.GetInfo,
 			atc.GetCC,
 			atc.ListTeams,
@@ -164,7 +165,10 @@ func (wrappa *APIAuthWrappa) Wrap(handlers rata.Handlers) rata.Handlers {
 			atc.ClearResourceCache,
 			atc.CreateArtifact,
 			atc.ScheduleJob,
-			atc.GetArtifact:
+			atc.GetArtifact,
+			atc.SetWebhook,
+			atc.DestroyWebhook,
+			atc.ListWebhooks:
 			newHandler = auth.CheckAuthorizationHandler(handler, rejector)
 
 		// think about it!
