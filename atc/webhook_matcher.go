@@ -104,6 +104,8 @@ func FindWebhookMatcher(resourceType, webhookType string) *WebhookMatcher {
 //   - If the source field IS set, the rule is evaluated:
 //     - Extract identifier from source value (via source_pattern, or raw value).
 //     - Extract identifier from payload (via payload_field dot-path + payload_pattern).
+//     - If payload_pattern is specified but doesn't match the payload value, the rule
+//       is SKIPPED (the payload is not relevant to this rule's dimension).
 //     - Compare: if source_is_pattern=true, test payload value against source value as regex;
 //       otherwise use case-insensitive string equality.
 //   - All applicable (non-skipped) rules must pass. If any fails, returns false.
@@ -115,8 +117,14 @@ func (m *WebhookMatcher) MatchResourceSource(source map[string]interface{}, payl
 		return false
 	}
 
+	// Track whether the resource has any payload_pattern-constrained rules
+	// where the source field is present. If so, at least one such rule must
+	// be applicable (payload_pattern must match) for the resource to trigger.
+	// This prevents e.g. a tag-only resource from being triggered by a branch push.
+	hasPatternConstraint := false
+	patternConstraintEvaluated := false
+
 	for _, rule := range m.Rules {
-		// Step 1: get source field value. Skip rule if absent or empty.
 		rawSourceVal, ok := source[rule.SourceField]
 		if !ok {
 			continue
@@ -126,33 +134,43 @@ func (m *WebhookMatcher) MatchResourceSource(source map[string]interface{}, payl
 			continue
 		}
 
-		// Step 2: extract identifier from source value.
-		sourceID := extractWithPattern(sourceStr, rule.compiledSourcePattern)
-
-		// Step 3: extract identifier from payload.
 		payloadStr := extractJSONField(payloadMap, rule.PayloadField)
 		if payloadStr == "" {
-			// Payload doesn't have the field — can't match.
 			return false
 		}
-		payloadID := extractWithPattern(payloadStr, rule.compiledPayloadPattern)
 
-		// Step 4: compare.
+		if rule.compiledPayloadPattern != nil {
+			matches := rule.compiledPayloadPattern.FindStringSubmatch(payloadStr)
+			if matches == nil {
+				hasPatternConstraint = true
+				continue
+			}
+			if len(matches) > 1 {
+				payloadStr = matches[1]
+			}
+			patternConstraintEvaluated = true
+		}
+
+		sourceID := extractWithPattern(sourceStr, rule.compiledSourcePattern)
+
 		var matched bool
 		if rule.SourceIsPattern {
-			// Source value is itself a regex pattern (e.g. tag_filter: "v.*")
 			re, err := regexp.Compile(sourceID)
 			if err != nil {
 				return false
 			}
-			matched = re.MatchString(payloadID)
+			matched = re.MatchString(payloadStr)
 		} else {
-			matched = strings.EqualFold(sourceID, payloadID)
+			matched = strings.EqualFold(sourceID, payloadStr)
 		}
 
 		if !matched {
 			return false
 		}
+	}
+
+	if hasPatternConstraint && !patternConstraintEvaluated {
+		return false
 	}
 
 	return true

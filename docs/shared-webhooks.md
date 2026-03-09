@@ -145,13 +145,14 @@ registry-image:
 
 For each rule in the list:
 
-| Resource has `source_field`? | Result |
-|---|---|
-| **No** | Rule is **skipped** — resource is not constrained on this dimension (wildcard) |
-| **Yes, matches payload** | Rule **passes** |
-| **Yes, doesn't match** | Rule **fails** → resource NOT triggered |
+| Resource has `source_field`? | Payload matches `payload_pattern`? | Result |
+|---|---|---|
+| **No** | N/A | Rule is **skipped** — resource is not constrained on this dimension (wildcard) |
+| **Yes** | **No pattern specified** | Rule is **evaluated** — compares source value to payload value |
+| **Yes** | **Pattern matches** | Rule is **evaluated** — compares source value to extracted payload value |
+| **Yes** | **Pattern doesn't match** | Rule is **skipped** — the event is not relevant to this rule's dimension |
 
-All non-skipped rules must pass. **AND semantics across dimensions.**
+All non-skipped rules must pass (**AND semantics**). Additionally, if the resource has any source fields with `payload_pattern`-constrained rules, at least one of those rules must have been applicable (pattern matched the payload). This prevents e.g. a tag-only resource from being triggered by branch pushes.
 
 #### Outcome examples for git/github
 
@@ -517,7 +518,7 @@ rate(concourse_webhooks_checks_triggered_total[5m])
 
 ✅ `go build ./atc/... ./fly/... ./go-concourse/...` — **passes with zero errors**
 
-✅ `go test ./atc/ -run TestWebhookMatcher` — **14/14 tests pass** (added branch mismatch, tag_filter pattern, skip-if-absent wildcard tests)
+✅ `go test ./atc/ -run TestWebhookMatcher` — **17/17 tests pass**
 
 ✅ `go generate ./atc/db/...` — **FakeTeam and FakeWebhook regenerated** (with `WebhookConfig`/`Rules` signatures)
 

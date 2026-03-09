@@ -178,6 +178,80 @@ func TestWebhookMatcherBranchAbsentIsWildcard(t *testing.T) {
 	}
 }
 
+// --- Both branch and tag_filter: payload_pattern skip enables coexistence --
+//
+// When a resource has both branch and tag_filter, rules whose payload_pattern
+// doesn't match the event ref are skipped (not failed). This allows both
+// branch pushes and tag pushes to trigger the resource independently.
+
+func TestWebhookMatcherBranchAndTagFilterBranchPush(t *testing.T) {
+	m := loadGitHub(
+		uriRule(githubURIPattern, "repository.full_name"),
+		branchRule(),
+		tagRule(),
+	)
+	source := atc.Source{
+		"uri":        "https://github.com/example/repo.git",
+		"branch":     "main",
+		"tag_filter": `v.*`,
+	}
+	payload := json.RawMessage(`{"repository":{"full_name":"example/repo"},"ref":"refs/heads/main"}`)
+	if !m.MatchResourceSource(source, payload) {
+		t.Error("expected match: push to main, tag rule skipped (payload_pattern refs/tags/ doesn't match)")
+	}
+}
+
+func TestWebhookMatcherBranchAndTagFilterTagPush(t *testing.T) {
+	m := loadGitHub(
+		uriRule(githubURIPattern, "repository.full_name"),
+		branchRule(),
+		tagRule(),
+	)
+	source := atc.Source{
+		"uri":        "https://github.com/example/repo.git",
+		"branch":     "main",
+		"tag_filter": `v.*`,
+	}
+	payload := json.RawMessage(`{"repository":{"full_name":"example/repo"},"ref":"refs/tags/v1.0.0"}`)
+	if !m.MatchResourceSource(source, payload) {
+		t.Error("expected match: tag v1.0.0 matches tag_filter, branch rule skipped (payload_pattern refs/heads/ doesn't match)")
+	}
+}
+
+func TestWebhookMatcherBranchAndTagFilterWrongBranch(t *testing.T) {
+	m := loadGitHub(
+		uriRule(githubURIPattern, "repository.full_name"),
+		branchRule(),
+		tagRule(),
+	)
+	source := atc.Source{
+		"uri":        "https://github.com/example/repo.git",
+		"branch":     "main",
+		"tag_filter": `v.*`,
+	}
+	payload := json.RawMessage(`{"repository":{"full_name":"example/repo"},"ref":"refs/heads/develop"}`)
+	if m.MatchResourceSource(source, payload) {
+		t.Error("expected no match: push to develop, resource watches main")
+	}
+}
+
+func TestWebhookMatcherBranchAndTagFilterWrongTag(t *testing.T) {
+	m := loadGitHub(
+		uriRule(githubURIPattern, "repository.full_name"),
+		branchRule(),
+		tagRule(),
+	)
+	source := atc.Source{
+		"uri":        "https://github.com/example/repo.git",
+		"branch":     "main",
+		"tag_filter": `v.*`,
+	}
+	payload := json.RawMessage(`{"repository":{"full_name":"example/repo"},"ref":"refs/tags/release-1.0"}`)
+	if m.MatchResourceSource(source, payload) {
+		t.Error("expected no match: tag release-1.0 doesn't match tag_filter v.*")
+	}
+}
+
 // --- GitLab ---------------------------------------------------------------
 
 func TestWebhookMatcherGitLabProvider(t *testing.T) {
