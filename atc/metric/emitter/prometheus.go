@@ -83,6 +83,11 @@ type PrometheusEmitter struct {
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
 
+	webhookRequestDuration  *prometheus.HistogramVec
+	webhookRequestsTotal    *prometheus.CounterVec
+	webhookResourcesMatched *prometheus.CounterVec
+	webhookChecksTriggered  *prometheus.CounterVec
+
 	workerContainers                   *prometheus.GaugeVec
 	workerUnknownContainers            *prometheus.GaugeVec
 	workerVolumes                      *prometheus.GaugeVec
@@ -806,6 +811,56 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(streamedResourceCaches)
 
+	// webhook metrics
+	webhookRequestDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "webhooks",
+			Name:        "request_duration_seconds",
+			Help:        "Webhook request duration in seconds",
+			ConstLabels: attributes,
+			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+		},
+		[]string{"team", "webhook_name", "webhook_type", "status"},
+	)
+	prometheus.MustRegister(webhookRequestDuration)
+
+	webhookRequestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "webhooks",
+			Name:        "requests_total",
+			Help:        "Total number of webhook requests received",
+			ConstLabels: attributes,
+		},
+		[]string{"team", "webhook_name", "webhook_type", "status"},
+	)
+	prometheus.MustRegister(webhookRequestsTotal)
+
+	webhookResourcesMatched := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "webhooks",
+			Name:        "resources_matched_total",
+			Help:        "Total number of resources matched by webhooks",
+			ConstLabels: attributes,
+		},
+		[]string{"team", "webhook_name", "webhook_type", "match_type"},
+	)
+	prometheus.MustRegister(webhookResourcesMatched)
+
+	webhookChecksTriggered := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "webhooks",
+			Name:        "checks_triggered_total",
+			Help:        "Total number of resource checks triggered by webhooks",
+			ConstLabels: attributes,
+		},
+		[]string{"team", "webhook_name", "webhook_type"},
+	)
+	prometheus.MustRegister(webhookChecksTriggered)
+
 	listener, err := net.Listen("tcp", config.bind())
 	if err != nil {
 		return nil, err
@@ -894,6 +949,11 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
+
+		webhookRequestDuration:  webhookRequestDuration,
+		webhookRequestsTotal:    webhookRequestsTotal,
+		webhookResourcesMatched: webhookResourcesMatched,
+		webhookChecksTriggered:  webhookChecksTriggered,
 	}
 	go emitter.periodicMetricGC()
 
@@ -1035,6 +1095,33 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
 		emitter.streamedResourceCaches.Add(event.Value)
+	case "webhook request duration":
+		emitter.webhookRequestDuration.WithLabelValues(
+			event.Attributes["team"],
+			event.Attributes["webhook_name"],
+			event.Attributes["webhook_type"],
+			event.Attributes["status"],
+		).Observe(event.Value)
+	case "webhook request":
+		emitter.webhookRequestsTotal.WithLabelValues(
+			event.Attributes["team"],
+			event.Attributes["webhook_name"],
+			event.Attributes["webhook_type"],
+			event.Attributes["status"],
+		).Add(event.Value)
+	case "webhook resources matched":
+		emitter.webhookResourcesMatched.WithLabelValues(
+			event.Attributes["team"],
+			event.Attributes["webhook_name"],
+			event.Attributes["webhook_type"],
+			event.Attributes["match_type"],
+		).Add(event.Value)
+	case "webhook checks triggered":
+		emitter.webhookChecksTriggered.WithLabelValues(
+			event.Attributes["team"],
+			event.Attributes["webhook_name"],
+			event.Attributes["webhook_type"],
+		).Add(event.Value)
 	default:
 		// unless we have a specific metric, we do nothing
 	}

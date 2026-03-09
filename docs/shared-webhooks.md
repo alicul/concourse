@@ -449,6 +449,14 @@ fly -t ci destroy-webhook --webhook github-org [--non-interactive]
 | [webhooks.go (client)](file:///home/espirite/WORK/concourse/go-concourse/concourse/webhooks.go) | `WebhookConfig` uses `Rules []atc.WebhookMatcherRule` |
 | [resource.go](file:///home/espirite/WORK/concourse/atc/db/resource.go) | `HasWebhook()` now includes shared webhook subscriptions |
 
+### Phase 3 — Observability
+
+| File | Change |
+|---|---|
+| [webhook_metrics.go](file:///home/espirite/WORK/concourse/atc/metric/webhook_metrics.go) | New `WebhookReceived` metric type with duration, match type, and checks triggered |
+| [prometheus.go](file:///home/espirite/WORK/concourse/atc/metric/emitter/prometheus.go) | Added webhook metrics: requests_total, request_duration_seconds, resources_matched_total, checks_triggered_total |
+| [server.go](file:///home/espirite/WORK/concourse/atc/api/webhookserver/server.go) | Instrumented `ReceiveWebhook` to emit metrics; added `findMatchingResourcesWithType` to track match type |
+
 ---
 
 ## Design Decisions
@@ -465,6 +473,36 @@ fly -t ci destroy-webhook --webhook github-org [--non-interactive]
 | Case-insensitive matching | `strings.EqualFold` | Handles URI case variations (e.g. GitHub vs github) |
 | Eager regex compile | Compiled at load time | Avoids per-match recompilation; early error detection at startup |
 | Encryption at rest | `conn.EncryptionStrategy()` + nonce | HMAC secrets encrypted using Concourse's existing mechanism |
+
+---
+
+## Observability
+
+### Prometheus Metrics
+
+When Prometheus is enabled, the following webhook-specific metrics are exported:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `concourse_webhooks_requests_total` | Counter | `team`, `webhook_name`, `webhook_type`, `status` | Total webhook requests received (status: 2xx, 4xx, 5xx) |
+| `concourse_webhooks_request_duration_seconds` | Histogram | `team`, `webhook_name`, `webhook_type`, `status` | Webhook request processing duration |
+| `concourse_webhooks_resources_matched_total` | Counter | `team`, `webhook_name`, `webhook_type`, `match_type` | Resources matched by webhooks (match_type: jsonb_filter, matcher, fallback, none) |
+| `concourse_webhooks_checks_triggered_total` | Counter | `team`, `webhook_name`, `webhook_type` | Resource checks triggered by webhooks |
+
+**Example queries:**
+```promql
+# Webhook request rate by team
+rate(concourse_webhooks_requests_total[5m])
+
+# 95th percentile webhook duration
+histogram_quantile(0.95, rate(concourse_webhooks_request_duration_seconds_bucket[5m]))
+
+# Match efficiency (jsonb vs matcher vs fallback)
+sum by (match_type) (rate(concourse_webhooks_resources_matched_total[5m]))
+
+# Checks triggered per webhook
+rate(concourse_webhooks_checks_triggered_total[5m])
+```
 
 ---
 

@@ -10,12 +10,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"code.cloudfoundry.org/lager/v3"
 	"code.cloudfoundry.org/lager/v3/lagerctx"
 	"github.com/concourse/concourse/atc"
 	"github.com/concourse/concourse/atc/api/present"
 	"github.com/concourse/concourse/atc/db"
+	"github.com/concourse/concourse/atc/metric"
 	"github.com/tedsuo/rata"
 )
 
@@ -173,6 +175,7 @@ func (s *Server) ListWebhooks(dbTeam db.Team) http.Handler {
 // 2. Operator-configured webhook matcher (from base resource type defaults)
 // 3. Fallback: trigger all subscribed resources of matching type (no filter, no matcher)
 func (s *Server) ReceiveWebhook(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	webhookName := rata.Param(r, "webhook_name")
 	teamName := rata.Param(r, "team_name")
 
@@ -181,16 +184,39 @@ func (s *Server) ReceiveWebhook(w http.ResponseWriter, r *http.Request) {
 		"team":    teamName,
 	})
 
+	// Deferred function to emit metrics at the end
+	var statusCode int
+	var webhookType string
+	var matchType string
+	var matchCount int
+	var checksCreated int
+	defer func() {
+		if webhookType != "" { // Only emit if we successfully found the webhook
+			metric.WebhookReceived{
+				TeamName:    teamName,
+				WebhookName: webhookName,
+				WebhookType: webhookType,
+				Status:      statusCode,
+				Duration:    time.Since(start),
+				MatchType:   matchType,
+				MatchCount:  matchCount,
+				ChecksCount: checksCreated,
+			}.Emit(logger)
+		}
+	}()
+
 	// Find the team
 	team, found, err := s.teamFactory.FindTeam(teamName)
 	if err != nil {
 		logger.Error("failed-to-find-team", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		statusCode = http.StatusInternalServerError
+		w.WriteHeader(statusCode)
 		return
 	}
 	if !found {
 		logger.Info("team-not-found")
-		w.WriteHeader(http.StatusNotFound)
+		statusCode = http.StatusNotFound
+		w.WriteHeader(statusCode)
 		return
 	}
 
@@ -198,26 +224,33 @@ func (s *Server) ReceiveWebhook(w http.ResponseWriter, r *http.Request) {
 	webhook, found, err := team.FindWebhook(webhookName)
 	if err != nil {
 		logger.Error("failed-to-find-webhook", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		statusCode = http.StatusInternalServerError
+		w.WriteHeader(statusCode)
 		return
 	}
 	if !found {
 		logger.Info("webhook-not-found")
-		w.WriteHeader(http.StatusNotFound)
+		statusCode = http.StatusNotFound
+		w.WriteHeader(statusCode)
 		return
 	}
+
+	// Capture webhook type for metrics
+	webhookType = webhook.Type()
 
 	// Read the payload body (needed for both HMAC validation and matching)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Error("failed-to-read-body", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		statusCode = http.StatusInternalServerError
+		w.WriteHeader(statusCode)
 		return
 	}
 
 	// --- Authentication ---
 	if !s.validateWebhookAuth(logger, webhook, r, body) {
-		w.WriteHeader(http.StatusUnauthorized)
+		statusCode = http.StatusUnauthorized
+		w.WriteHeader(statusCode)
 		return
 	}
 
@@ -228,17 +261,20 @@ func (s *Server) ReceiveWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Resource matching ---
-	resources, err := s.findMatchingResources(logger, team, webhook, payload)
+	resources, matchTypeResult, err := s.findMatchingResourcesWithType(logger, team, webhook, payload)
 	if err != nil {
 		logger.Error("failed-to-find-matching-resources", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		statusCode = http.StatusInternalServerError
+		w.WriteHeader(statusCode)
 		return
 	}
 
-	logger.Info("matched-resources", lager.Data{"count": len(resources)})
+	matchType = matchTypeResult
+	matchCount = len(resources)
+	logger.Info("matched-resources", lager.Data{"count": matchCount, "match_type": matchType})
 
 	// --- Trigger checks ---
-	checksCreated := 0
+	checksCreated = 0
 	var lastBuild db.Build
 	for _, resource := range resources {
 		pipeline, found, err := team.Pipeline(atc.PipelineRef{
@@ -288,8 +324,9 @@ func (s *Server) ReceiveWebhook(w http.ResponseWriter, r *http.Request) {
 		response.Build = &b
 	}
 
+	statusCode = http.StatusOK
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -403,37 +440,59 @@ func ValidateHMACSHA256(secret string, body []byte, signatureHeader string) bool
 	return hmac.Equal(computedMAC, expectedBytes)
 }
 
-// findMatchingResources finds resources that should be checked based on the
-// webhook type and payload. It uses a priority chain:
+// findMatchingResourcesWithType finds resources that should be checked based on the
+// webhook type and payload, and returns the match type used. It uses a priority chain:
 // 1. Explicit JSONB filter (resources with non-empty filter in their subscription)
 // 2. Operator-configured webhook matcher (from base resource type defaults)
 // 3. Fallback: all subscribed resources of the matching type
+// Returns (resources, matchType, error) where matchType is "jsonb_filter", "matcher", "fallback", or "none"
+func (s *Server) findMatchingResourcesWithType(
+	logger lager.Logger,
+	team db.Team,
+	webhook db.Webhook,
+	payload json.RawMessage,
+) ([]db.Resource, string, error) {
+	resources, matchType, err := s.findMatchingResourcesInternal(logger, team, webhook, payload)
+	return resources, matchType, err
+}
+
+// findMatchingResources is the legacy function kept for compatibility
 func (s *Server) findMatchingResources(
 	logger lager.Logger,
 	team db.Team,
 	webhook db.Webhook,
 	payload json.RawMessage,
 ) ([]db.Resource, error) {
+	resources, _, err := s.findMatchingResourcesInternal(logger, team, webhook, payload)
+	return resources, err
+}
+
+func (s *Server) findMatchingResourcesInternal(
+	logger lager.Logger,
+	team db.Team,
+	webhook db.Webhook,
+	payload json.RawMessage,
+) ([]db.Resource, string, error) {
 	// First, try JSONB containment matching (resources with explicit filters)
 	filteredResources, err := team.FindResourcesByWebhookPayload(webhook.Type(), payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if len(filteredResources) > 0 {
 		logger.Info("matched-via-jsonb-filter", lager.Data{"count": len(filteredResources)})
-		return filteredResources, nil
+		return filteredResources, "jsonb_filter", nil
 	}
 
 	// No JSONB filter matches — try matcher-based filtering
 	// Get all resources subscribed to this webhook type
 	allSubscribed, err := team.FindResourcesByWebhookType(webhook.Type())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if len(allSubscribed) == 0 {
-		return nil, nil
+		return nil, "none", nil
 	}
 
 	// Try to apply matcher-based filtering.
@@ -469,10 +528,10 @@ func (s *Server) findMatchingResources(
 
 	if matcherUsed {
 		logger.Info("matched-via-matcher", lager.Data{"count": len(matcherFiltered)})
-		return matcherFiltered, nil
+		return matcherFiltered, "matcher", nil
 	}
 
 	// No matchers configured for any resource — return all subscribed resources.
 	logger.Info("matched-via-fallback", lager.Data{"count": len(allSubscribed)})
-	return allSubscribed, nil
+	return allSubscribed, "fallback", nil
 }
