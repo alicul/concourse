@@ -1,0 +1,8 @@
+BEGIN;
+
+DROP TABLE IF EXISTS p2p_streaming_metrics CASCADE;
+DROP TABLE IF EXISTS worker_connectivity CASCADE;
+DROP TABLE IF EXISTS worker_networks CASCADE;
+DROP TABLE IF EXISTS network_segments CASCADE;
+
+COMMIT;

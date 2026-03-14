@@ -1,0 +1,331 @@
+version: '3.8'
+
+networks:
+  # Management network - all services connected for TSA communication
+  mgmt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
+          gateway: 172.19.0.1
+
+  # Network Segment 1 - Worker Group A
+  segment1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+  # Network Segment 2 - Worker Group B
+  segment2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+
+  # Network Segment 3 - Isolated network
+  segment3:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1
+
+services:
+  db:
+    image: postgres:15
+    shm_size: 1gb
+    ports:
+      - "6543:5432"
+    networks:
+      - mgmt
+    environment:
+      POSTGRES_DB: concourse
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d concourse"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: web
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "9090:9090"  # Prometheus metrics
+      - "2222:2222"   # TSA
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.10
+    volumes:
+      - .:/src
+      - "./hack/keys:/concourse-keys"
+    environment:
+      # Core Configuration
+      CONCOURSE_SESSION_SIGNING_KEY: /concourse-keys/session_signing_key
+      CONCOURSE_TSA_AUTHORIZED_KEYS: /concourse-keys/authorized_worker_keys
+      CONCOURSE_TSA_HOST_KEY: /concourse-keys/tsa_host_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_POSTGRES_HOST: db
+      CONCOURSE_POSTGRES_USER: dev
+      CONCOURSE_POSTGRES_PASSWORD: dev
+      CONCOURSE_POSTGRES_DATABASE: concourse
+      CONCOURSE_EXTERNAL_URL: http://localhost:8080
+      CONCOURSE_ADD_LOCAL_USER: test:test,guest:guest
+      CONCOURSE_MAIN_TEAM_LOCAL_USER: test
+      CONCOURSE_CLUSTER_NAME: p2p-multinetwork
+
+      # P2P Multi-Network Configuration
+      CONCOURSE_ENABLE_P2P_VOLUME_STREAMING: "true"
+      CONCOURSE_P2P_MULTI_NETWORK_ENABLED: "true"
+      CONCOURSE_P2P_RELAY_WORKERS_ENABLED: "true"
+      CONCOURSE_P2P_NETWORK_TOPOLOGY_REFRESH: "30s"
+      CONCOURSE_P2P_VOLUME_STREAMING_TIMEOUT: "5m"
+
+      # Feature Flags
+      CONCOURSE_ENABLE_CACHE_STREAMED_VOLUMES: "true"
+      CONCOURSE_ENABLE_RESOURCE_CAUSALITY: "true"
+
+      # Metrics
+      CONCOURSE_PROMETHEUS_BIND_IP: "0.0.0.0"
+      CONCOURSE_PROMETHEUS_BIND_PORT: "9090"
+
+  # Worker in segment1 only
+  worker-s1-a:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: worker
+    privileged: true
+    cgroup: host
+    depends_on:
+      - web
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.21
+      segment1:
+        ipv4_address: 172.20.0.10
+    volumes:
+      - "./hack/keys:/concourse-keys"
+    stop_signal: SIGUSR2
+    environment:
+      CONCOURSE_NAME: worker-s1-a
+      CONCOURSE_RUNTIME: containerd
+      CONCOURSE_TSA_PUBLIC_KEY: /concourse-keys/tsa_host_key.pub
+      CONCOURSE_TSA_WORKER_PRIVATE_KEY: /concourse-keys/worker_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_TSA_HOST: web:2222
+      CONCOURSE_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_DRIVER: overlay
+      CONCOURSE_CONTAINERD_DNS_PROXY_ENABLE: "true"
+
+      # P2P Multi-Network Config
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACES: |
+        - pattern: "eth1"
+          network_segment: "segment1"
+          priority: 1
+      CONCOURSE_BAGGAGECLAIM_P2P_NETWORK_DETECTION: "manual"
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACE_FAMILY: "4"
+
+      # Worker tags
+      CONCOURSE_TAGS: "segment1,worker-s1"
+
+  # Another worker in segment1
+  worker-s1-b:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: worker
+    privileged: true
+    cgroup: host
+    depends_on:
+      - web
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.22
+      segment1:
+        ipv4_address: 172.20.0.11
+    volumes:
+      - "./hack/keys:/concourse-keys"
+    stop_signal: SIGUSR2
+    environment:
+      CONCOURSE_NAME: worker-s1-b
+      CONCOURSE_RUNTIME: containerd
+      CONCOURSE_TSA_PUBLIC_KEY: /concourse-keys/tsa_host_key.pub
+      CONCOURSE_TSA_WORKER_PRIVATE_KEY: /concourse-keys/worker_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_TSA_HOST: web:2222
+      CONCOURSE_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_DRIVER: overlay
+      CONCOURSE_CONTAINERD_DNS_PROXY_ENABLE: "true"
+
+      # P2P Multi-Network Config
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACES: |
+        - pattern: "eth1"
+          network_segment: "segment1"
+          priority: 1
+      CONCOURSE_BAGGAGECLAIM_P2P_NETWORK_DETECTION: "manual"
+
+      # Worker tags
+      CONCOURSE_TAGS: "segment1,worker-s1"
+
+  # Worker in segment2 only
+  worker-s2:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: worker
+    privileged: true
+    cgroup: host
+    depends_on:
+      - web
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.23
+      segment2:
+        ipv4_address: 172.21.0.10
+    volumes:
+      - "./hack/keys:/concourse-keys"
+    stop_signal: SIGUSR2
+    environment:
+      CONCOURSE_NAME: worker-s2
+      CONCOURSE_RUNTIME: containerd
+      CONCOURSE_TSA_PUBLIC_KEY: /concourse-keys/tsa_host_key.pub
+      CONCOURSE_TSA_WORKER_PRIVATE_KEY: /concourse-keys/worker_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_TSA_HOST: web:2222
+      CONCOURSE_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_DRIVER: overlay
+      CONCOURSE_CONTAINERD_DNS_PROXY_ENABLE: "true"
+
+      # P2P Multi-Network Config
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACES: |
+        - pattern: "eth1"
+          network_segment: "segment2"
+          priority: 1
+      CONCOURSE_BAGGAGECLAIM_P2P_NETWORK_DETECTION: "manual"
+
+      # Worker tags
+      CONCOURSE_TAGS: "segment2,worker-s2"
+
+  # Relay worker bridging segment1 and segment2
+  worker-relay:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: worker
+    privileged: true
+    cgroup: host
+    depends_on:
+      - web
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.24
+      segment1:
+        ipv4_address: 172.20.0.20
+      segment2:
+        ipv4_address: 172.21.0.20
+    volumes:
+      - "./hack/keys:/concourse-keys"
+    stop_signal: SIGUSR2
+    environment:
+      CONCOURSE_NAME: worker-relay
+      CONCOURSE_RUNTIME: containerd
+      CONCOURSE_TSA_PUBLIC_KEY: /concourse-keys/tsa_host_key.pub
+      CONCOURSE_TSA_WORKER_PRIVATE_KEY: /concourse-keys/worker_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_TSA_HOST: web:2222
+      CONCOURSE_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_DRIVER: overlay
+      CONCOURSE_CONTAINERD_DNS_PROXY_ENABLE: "true"
+
+      # P2P Relay Configuration
+      CONCOURSE_BAGGAGECLAIM_P2P_RELAY_ENABLED: "true"
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACES: |
+        - pattern: "eth1"
+          network_segment: "segment1"
+          priority: 1
+        - pattern: "eth2"
+          network_segment: "segment2"
+          priority: 1
+      CONCOURSE_BAGGAGECLAIM_P2P_NETWORK_DETECTION: "manual"
+
+      # Worker tags
+      CONCOURSE_TAGS: "relay,segment1,segment2"
+
+  # Isolated worker in segment3 (no relay access)
+  worker-isolated:
+    build: .
+    image: concourse/concourse:p2p-multinetwork
+    command: worker
+    privileged: true
+    cgroup: host
+    depends_on:
+      - web
+    networks:
+      mgmt:
+        ipv4_address: 172.19.0.25
+      segment3:
+        ipv4_address: 172.22.0.10
+    volumes:
+      - "./hack/keys:/concourse-keys"
+    stop_signal: SIGUSR2
+    environment:
+      CONCOURSE_NAME: worker-isolated
+      CONCOURSE_RUNTIME: containerd
+      CONCOURSE_TSA_PUBLIC_KEY: /concourse-keys/tsa_host_key.pub
+      CONCOURSE_TSA_WORKER_PRIVATE_KEY: /concourse-keys/worker_key
+      CONCOURSE_LOG_LEVEL: debug
+      CONCOURSE_TSA_HOST: web:2222
+      CONCOURSE_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_BIND_IP: 0.0.0.0
+      CONCOURSE_BAGGAGECLAIM_DRIVER: overlay
+      CONCOURSE_CONTAINERD_DNS_PROXY_ENABLE: "true"
+
+      # P2P Multi-Network Config
+      CONCOURSE_BAGGAGECLAIM_P2P_INTERFACES: |
+        - pattern: "eth1"
+          network_segment: "segment3"
+          priority: 1
+      CONCOURSE_BAGGAGECLAIM_P2P_NETWORK_DETECTION: "manual"
+
+      # Worker tags
+      CONCOURSE_TAGS: "isolated,segment3"
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    networks:
+      - mgmt
+    ports:
+      - "9091:9090"
+    volumes:
+      - "./monitoring/prometheus-p2p.yml:/etc/prometheus/prometheus.yml"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    networks:
+      - mgmt
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards"
+      - "./monitoring/grafana/provisioning:/etc/grafana/provisioning"

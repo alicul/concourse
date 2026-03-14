@@ -1,0 +1,144 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Concourse P2P Multi-Network Streaming",
+    "tags": ["concourse", "p2p", "streaming"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "title": "P2P Streaming Success Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(concourse_p2p_streaming_success_total[5m]) / rate(concourse_p2p_streaming_attempts_total[5m])",
+            "legendFormat": "{{source_worker}} -> {{destination_worker}}"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "title": "Volume Streaming by Type",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (streaming_type) (increase(concourse_volumes_streamed_count[1h]))",
+            "legendFormat": "{{streaming_type}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "title": "P2P Streaming Duration",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(concourse_volumes_streaming_duration_seconds_bucket[5m])) by (le, source_worker, destination_worker))",
+            "legendFormat": "{{source_worker}} -> {{destination_worker}}"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "title": "Bytes Streamed",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(concourse_volumes_streamed_bytes[5m])",
+            "legendFormat": "{{source_worker}} -> {{destination_worker}} ({{streaming_type}})"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "title": "Relay Worker Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "increase(concourse_p2p_relay_streams_total[1h])",
+            "legendFormat": "Relay: {{relay_worker}}"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "title": "Network Topology Changes",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(concourse_p2p_network_topology_changes_total[1h])",
+            "legendFormat": "Topology Changes"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "title": "P2P Connectivity Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(concourse_p2p_connectivity_latency_milliseconds_bucket[5m])) by (le, source_worker, destination_worker))",
+            "legendFormat": "{{source_worker}} -> {{destination_worker}}"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "title": "Active P2P Streams",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "concourse_p2p_active_streams",
+            "legendFormat": "{{source_worker}} -> {{destination_worker}} ({{streaming_type}})"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "title": "Worker Network Segments",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "concourse_p2p_worker_network_segments",
+            "format": "table",
+            "instant": true
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "title": "P2P Failures by Reason",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (failure_reason) (increase(concourse_p2p_streaming_failures_total[1h]))",
+            "legendFormat": "{{failure_reason}}"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "title": "Volume Streaming Queue Size",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "concourse_volumes_streaming_queue_size",
+            "legendFormat": "{{worker_name}} - {{queue_type}}"
+          }
+        ]
+      }
+    ],
+    "version": 1
+  }
+}
