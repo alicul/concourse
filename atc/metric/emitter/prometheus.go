@@ -78,7 +78,17 @@ type PrometheusEmitter struct {
 
 	checksEnqueued prometheus.Counter
 
-	volumesStreamed prometheus.Counter
+	volumesStreamed            prometheus.Counter
+	volumesStreamedViaFallback prometheus.Counter
+
+	// New volume streaming metrics
+	volumeStreamingDuration   *prometheus.HistogramVec
+	volumeStreamingP2PSuccess prometheus.Counter
+	volumeStreamingP2PFailure prometheus.Counter
+	volumeStreamingATCSuccess prometheus.Counter
+	volumeStreamingATCFailure prometheus.Counter
+	volumeStreamingSize       prometheus.Histogram
+	volumeStreamingInProgress *prometheus.GaugeVec
 
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
@@ -576,6 +586,99 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(volumesStreamed)
 
+	volumesStreamedViaFallback := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "volumes_streamed_via_fallback",
+			Help:        "Total number of volumes streamed using ATC fallback after P2P failure",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(volumesStreamedViaFallback)
+
+	// New detailed streaming metrics
+	volumeStreamingDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_duration_seconds",
+			Help:        "Duration of volume streaming operations in seconds",
+			ConstLabels: attributes,
+			Buckets:     []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+		},
+		[]string{"method", "status"},
+	)
+	prometheus.MustRegister(volumeStreamingDuration)
+
+	volumeStreamingP2PSuccess := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_p2p_success_total",
+			Help:        "Total number of successful P2P volume streams",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(volumeStreamingP2PSuccess)
+
+	volumeStreamingP2PFailure := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_p2p_failure_total",
+			Help:        "Total number of failed P2P volume streams",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(volumeStreamingP2PFailure)
+
+	volumeStreamingATCSuccess := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_atc_success_total",
+			Help:        "Total number of successful ATC-mediated volume streams",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(volumeStreamingATCSuccess)
+
+	volumeStreamingATCFailure := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_atc_failure_total",
+			Help:        "Total number of failed ATC-mediated volume streams",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(volumeStreamingATCFailure)
+
+	volumeStreamingSize := prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_size_bytes",
+			Help:        "Size of volumes streamed in bytes",
+			ConstLabels: attributes,
+			Buckets:     prometheus.ExponentialBuckets(1024*1024, 2, 15), // 1MB to 16GB
+		},
+	)
+	prometheus.MustRegister(volumeStreamingSize)
+
+	volumeStreamingInProgress := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "volumes",
+			Name:        "streaming_in_progress",
+			Help:        "Number of volume streaming operations currently in progress",
+			ConstLabels: attributes,
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(volumeStreamingInProgress)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -890,7 +993,16 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		workerUnknownVolumes:               workerUnknownVolumes,
 		workerOrphanedVolumesToBeCollected: workerOrphanedVolumesToBeCollected,
 
-		volumesStreamed: volumesStreamed,
+		volumesStreamed:            volumesStreamed,
+		volumesStreamedViaFallback: volumesStreamedViaFallback,
+
+		volumeStreamingDuration:   volumeStreamingDuration,
+		volumeStreamingP2PSuccess: volumeStreamingP2PSuccess,
+		volumeStreamingP2PFailure: volumeStreamingP2PFailure,
+		volumeStreamingATCSuccess: volumeStreamingATCSuccess,
+		volumeStreamingATCFailure: volumeStreamingATCFailure,
+		volumeStreamingSize:       volumeStreamingSize,
+		volumeStreamingInProgress: volumeStreamingInProgress,
 
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
@@ -1031,6 +1143,35 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.checksEnqueued.Add(event.Value)
 	case "volumes streamed":
 		emitter.volumesStreamed.Add(event.Value)
+	case "volumes streamed via fallback":
+		emitter.volumesStreamedViaFallback.Add(event.Value)
+	case "volume streaming p2p success":
+		emitter.volumeStreamingP2PSuccess.Add(event.Value)
+	case "volume streaming p2p failure":
+		emitter.volumeStreamingP2PFailure.Add(event.Value)
+	case "volume streaming atc success":
+		emitter.volumeStreamingATCSuccess.Add(event.Value)
+	case "volume streaming atc failure":
+		emitter.volumeStreamingATCFailure.Add(event.Value)
+	case "volume streaming duration":
+		method := event.Attributes["method"]
+		status := event.Attributes["status"]
+		if method != "" && status != "" {
+			emitter.volumeStreamingDuration.WithLabelValues(method, status).Observe(event.Value)
+		}
+	case "volume streaming size":
+		emitter.volumeStreamingSize.Observe(event.Value)
+	case "volume streaming in progress":
+		method := event.Attributes["method"]
+		if method != "" {
+			if event.State == "set" {
+				emitter.volumeStreamingInProgress.WithLabelValues(method).Set(event.Value)
+			} else if event.State == "inc" {
+				emitter.volumeStreamingInProgress.WithLabelValues(method).Inc()
+			} else if event.State == "dec" {
+				emitter.volumeStreamingInProgress.WithLabelValues(method).Dec()
+			}
+		}
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
