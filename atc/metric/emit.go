@@ -86,6 +86,12 @@ type Monitor struct {
 	VolumesStreamed            Counter
 	VolumesStreamedViaFallback Counter
 
+	// New detailed streaming metrics
+	VolumeStreamingP2PSuccess Counter
+	VolumeStreamingP2PFailure Counter
+	VolumeStreamingATCSuccess Counter
+	VolumeStreamingATCFailure Counter
+
 	GetStepCacheHits       Counter
 	StreamedResourceCaches Counter
 }
