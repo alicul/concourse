@@ -90,6 +90,13 @@ type PrometheusEmitter struct {
 	volumeStreamingSize       prometheus.Histogram
 	volumeStreamingInProgress *prometheus.GaugeVec
 
+	// Network topology metrics
+	networkTopologyChanges     prometheus.Counter
+	networkSegmentsDiscovered  *prometheus.GaugeVec
+	workerConnectivityTests    prometheus.Counter
+	p2pConnectivityTestSuccess prometheus.Counter
+	p2pConnectivityTestFailure prometheus.Counter
+
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
 
@@ -679,6 +686,63 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(volumeStreamingInProgress)
 
+	// Network topology metrics
+	networkTopologyChanges := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "topology_changes_total",
+			Help:        "Total number of network topology changes detected",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(networkTopologyChanges)
+
+	networkSegmentsDiscovered := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "segments_discovered",
+			Help:        "Number of network segments discovered per worker",
+			ConstLabels: attributes,
+		},
+		[]string{"worker"},
+	)
+	prometheus.MustRegister(networkSegmentsDiscovered)
+
+	workerConnectivityTests := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "connectivity_tests_total",
+			Help:        "Total number of worker connectivity tests performed",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(workerConnectivityTests)
+
+	p2pConnectivityTestSuccess := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_connectivity_test_success_total",
+			Help:        "Total number of successful P2P connectivity tests",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(p2pConnectivityTestSuccess)
+
+	p2pConnectivityTestFailure := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_connectivity_test_failure_total",
+			Help:        "Total number of failed P2P connectivity tests",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(p2pConnectivityTestFailure)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -1004,6 +1068,12 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		volumeStreamingSize:       volumeStreamingSize,
 		volumeStreamingInProgress: volumeStreamingInProgress,
 
+		networkTopologyChanges:     networkTopologyChanges,
+		networkSegmentsDiscovered:  networkSegmentsDiscovered,
+		workerConnectivityTests:    workerConnectivityTests,
+		p2pConnectivityTestSuccess: p2pConnectivityTestSuccess,
+		p2pConnectivityTestFailure: p2pConnectivityTestFailure,
+
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
 	}
@@ -1172,6 +1242,19 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 				emitter.volumeStreamingInProgress.WithLabelValues(method).Dec()
 			}
 		}
+	case "network topology changes":
+		emitter.networkTopologyChanges.Add(event.Value)
+	case "network segments discovered":
+		worker := event.Attributes["worker"]
+		if worker != "" {
+			emitter.networkSegmentsDiscovered.WithLabelValues(worker).Set(event.Value)
+		}
+	case "worker connectivity tests":
+		emitter.workerConnectivityTests.Add(event.Value)
+	case "p2p connectivity test success":
+		emitter.p2pConnectivityTestSuccess.Add(event.Value)
+	case "p2p connectivity test failure":
+		emitter.p2pConnectivityTestFailure.Add(event.Value)
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":

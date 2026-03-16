@@ -92,6 +92,13 @@ type Monitor struct {
 	VolumeStreamingATCSuccess Counter
 	VolumeStreamingATCFailure Counter
 
+	// Network topology metrics
+	NetworkTopologyChanges     Counter
+	NetworkSegmentsDiscovered  Gauge
+	WorkerConnectivityTests    Counter
+	P2PConnectivityTestSuccess Counter
+	P2PConnectivityTestFailure Counter
+
 	GetStepCacheHits       Counter
 	StreamedResourceCaches Counter
 }
