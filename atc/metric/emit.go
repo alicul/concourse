@@ -99,6 +99,13 @@ type Monitor struct {
 	P2PConnectivityTestSuccess Counter
 	P2PConnectivityTestFailure Counter
 
+	// P2P routing metrics
+	P2PRouteSelectionDuration Gauge
+	P2PRoutesByMethod         map[string]Counter
+	P2PStreamingByNetwork     map[string]Counter
+	P2PRouteCacheHits         Counter
+	P2PRouteCacheMisses       Counter
+
 	GetStepCacheHits       Counter
 	StreamedResourceCaches Counter
 }
@@ -110,6 +117,8 @@ func NewMonitor() *Monitor {
 		StepsWaiting:               map[StepsWaitingLabels]*Gauge{},
 		ConcurrentRequests:         map[string]*Gauge{},
 		ConcurrentRequestsLimitHit: map[string]*Counter{},
+		P2PRoutesByMethod:          map[string]Counter{},
+		P2PStreamingByNetwork:      map[string]Counter{},
 	}
 }
 

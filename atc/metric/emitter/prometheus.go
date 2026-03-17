@@ -97,6 +97,13 @@ type PrometheusEmitter struct {
 	p2pConnectivityTestSuccess prometheus.Counter
 	p2pConnectivityTestFailure prometheus.Counter
 
+	// P2P routing metrics
+	p2pRouteSelectionDuration *prometheus.HistogramVec
+	p2pRoutesByMethod         *prometheus.CounterVec
+	p2pStreamingByNetwork     *prometheus.CounterVec
+	p2pRouteCacheHits         prometheus.Counter
+	p2pRouteCacheMisses       prometheus.Counter
+
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
 
@@ -743,6 +750,66 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(p2pConnectivityTestFailure)
 
+	// P2P routing metrics
+	p2pRouteSelectionDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_route_selection_duration_seconds",
+			Help:        "Duration of P2P route selection in seconds",
+			ConstLabels: attributes,
+			Buckets:     []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0},
+		},
+		[]string{"source", "dest"},
+	)
+	prometheus.MustRegister(p2pRouteSelectionDuration)
+
+	p2pRoutesByMethod := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_routes_by_method_total",
+			Help:        "Total number of P2P routes selected by method",
+			ConstLabels: attributes,
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(p2pRoutesByMethod)
+
+	p2pStreamingByNetwork := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_streaming_by_network_total",
+			Help:        "Total number of P2P streams by network segment",
+			ConstLabels: attributes,
+		},
+		[]string{"segment", "status"},
+	)
+	prometheus.MustRegister(p2pStreamingByNetwork)
+
+	p2pRouteCacheHits := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_route_cache_hits_total",
+			Help:        "Total number of P2P route cache hits",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(p2pRouteCacheHits)
+
+	p2pRouteCacheMisses := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "network",
+			Name:        "p2p_route_cache_misses_total",
+			Help:        "Total number of P2P route cache misses",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(p2pRouteCacheMisses)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -1074,6 +1141,12 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		p2pConnectivityTestSuccess: p2pConnectivityTestSuccess,
 		p2pConnectivityTestFailure: p2pConnectivityTestFailure,
 
+		p2pRouteSelectionDuration: p2pRouteSelectionDuration,
+		p2pRoutesByMethod:         p2pRoutesByMethod,
+		p2pStreamingByNetwork:     p2pStreamingByNetwork,
+		p2pRouteCacheHits:         p2pRouteCacheHits,
+		p2pRouteCacheMisses:       p2pRouteCacheMisses,
+
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
 	}
@@ -1255,6 +1328,27 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.p2pConnectivityTestSuccess.Add(event.Value)
 	case "p2p connectivity test failure":
 		emitter.p2pConnectivityTestFailure.Add(event.Value)
+	case "p2p route selection duration":
+		source := event.Attributes["source"]
+		dest := event.Attributes["dest"]
+		if source != "" && dest != "" {
+			emitter.p2pRouteSelectionDuration.WithLabelValues(source, dest).Observe(event.Value)
+		}
+	case "p2p routes by method":
+		method := event.Attributes["method"]
+		if method != "" {
+			emitter.p2pRoutesByMethod.WithLabelValues(method).Add(event.Value)
+		}
+	case "p2p streaming by network":
+		segment := event.Attributes["segment"]
+		status := event.Attributes["status"]
+		if segment != "" && status != "" {
+			emitter.p2pStreamingByNetwork.WithLabelValues(segment, status).Add(event.Value)
+		}
+	case "p2p route cache hits":
+		emitter.p2pRouteCacheHits.Add(event.Value)
+	case "p2p route cache misses":
+		emitter.p2pRouteCacheMisses.Add(event.Value)
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
