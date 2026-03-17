@@ -106,6 +106,19 @@ type Monitor struct {
 	P2PRouteCacheHits         Counter
 	P2PRouteCacheMisses       Counter
 
+	// Relay worker metrics
+	RelayStreamingStarted     Counter
+	RelayStreamingSuccess     Counter
+	RelayStreamingFailure     Counter
+	RelayStreamingInProgress  Gauge
+	RelayStreamingDuration    HistogramVec
+	RelayStreamingBytes       Histogram
+	RelayWorkersActive        Gauge
+	RelayCapacityAvailable    Gauge
+	RelayCapacityUsed         Gauge
+	RelayLoadBalancerDecisions map[string]Counter
+	RelayNetworkBridgesActive Gauge
+
 	GetStepCacheHits       Counter
 	StreamedResourceCaches Counter
 }
@@ -119,6 +132,7 @@ func NewMonitor() *Monitor {
 		ConcurrentRequestsLimitHit: map[string]*Counter{},
 		P2PRoutesByMethod:          map[string]Counter{},
 		P2PStreamingByNetwork:      map[string]Counter{},
+		RelayLoadBalancerDecisions: map[string]Counter{},
 	}
 }
 

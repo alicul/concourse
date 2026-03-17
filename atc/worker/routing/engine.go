@@ -255,9 +255,158 @@ func (e *Engine) findDirectRoute(ctx context.Context, sourceWorker, destWorker s
 
 // findRelayRoute finds a route through a relay worker
 func (e *Engine) findRelayRoute(ctx context.Context, sourceWorker, destWorker string, topology db.NetworkTopology) *Route {
-	// This will be implemented in PR #3
-	// For now, return nil to fall back to ATC
-	return nil
+	e.logger.Debug("finding-relay-route", lager.Data{
+		"source": sourceWorker,
+		"dest":   destWorker,
+	})
+
+	// Get source and destination network segments
+	var sourceSegments []string
+	var destSegments []string
+
+	for _, wn := range topology.WorkerNetworks {
+		if wn.WorkerName == sourceWorker {
+			sourceSegments = append(sourceSegments, wn.SegmentID)
+		}
+		if wn.WorkerName == destWorker {
+			destSegments = append(destSegments, wn.SegmentID)
+		}
+	}
+
+	if len(sourceSegments) == 0 || len(destSegments) == 0 {
+		e.logger.Debug("no-segments-for-relay", lager.Data{
+			"source_segments": len(sourceSegments),
+			"dest_segments":   len(destSegments),
+		})
+		return nil
+	}
+
+	// Find relay workers that can bridge these segments
+	var potentialRelays []relayCandidate
+	for _, relay := range topology.RelayWorkers {
+		if !relay.Enabled {
+			continue
+		}
+
+		// Check if relay has capacity
+		if relay.ActiveConnections >= relay.MaxConnections {
+			e.logger.Debug("relay-at-capacity", lager.Data{
+				"relay":              relay.WorkerName,
+				"active_connections": relay.ActiveConnections,
+				"max_connections":    relay.MaxConnections,
+			})
+			continue
+		}
+
+		// Check if relay can bridge source to destination
+		for _, bridge := range topology.RelayNetworkBridges {
+			if bridge.WorkerName != relay.WorkerName || !bridge.Enabled {
+				continue
+			}
+
+			// Check if bridge connects source segment to dest segment
+			sourceMatch := false
+			destMatch := false
+			for _, ss := range sourceSegments {
+				if bridge.FromSegment == ss {
+					sourceMatch = true
+					break
+				}
+			}
+			for _, ds := range destSegments {
+				if bridge.ToSegment == ds {
+					destMatch = true
+					break
+				}
+			}
+
+			if sourceMatch && destMatch {
+				candidate := relayCandidate{
+					workerName: relay.WorkerName,
+					priority:   bridge.Priority,
+					capacity:   relay.MaxConnections - relay.ActiveConnections,
+					bandwidth:  relay.BandwidthLimitMbps,
+					bridge:     bridge,
+				}
+				potentialRelays = append(potentialRelays, candidate)
+				e.logger.Debug("relay-candidate-found", lager.Data{
+					"relay":    relay.WorkerName,
+					"from":     bridge.FromSegment,
+					"to":       bridge.ToSegment,
+					"priority": bridge.Priority,
+				})
+			}
+		}
+	}
+
+	if len(potentialRelays) == 0 {
+		e.logger.Debug("no-relay-candidates")
+		return nil
+	}
+
+	// Sort relay candidates by priority and capacity
+	sort.Slice(potentialRelays, func(i, j int) bool {
+		if potentialRelays[i].priority != potentialRelays[j].priority {
+			return potentialRelays[i].priority < potentialRelays[j].priority
+		}
+		return potentialRelays[i].capacity > potentialRelays[j].capacity
+	})
+
+	// Use the best relay
+	bestRelay := potentialRelays[0]
+
+	// Get relay worker's P2P endpoints
+	var relayEndpoints []Endpoint
+	for _, wn := range topology.WorkerNetworks {
+		if wn.WorkerName == bestRelay.workerName {
+			// Check if this network matches source or dest segments
+			for _, ss := range sourceSegments {
+				if wn.SegmentID == ss {
+					relayEndpoints = append(relayEndpoints, Endpoint{
+						URL:            wn.P2PEndpoint,
+						NetworkSegment: wn.SegmentID,
+						Priority:       bestRelay.priority,
+					})
+					break
+				}
+			}
+		}
+	}
+
+	if len(relayEndpoints) == 0 {
+		e.logger.Error("no-relay-endpoints", nil, lager.Data{
+			"relay": bestRelay.workerName,
+		})
+		return nil
+	}
+
+	route := &Route{
+		SourceWorker: sourceWorker,
+		DestWorker:   destWorker,
+		Method:       RouteMethodRelay,
+		RelayWorker:  bestRelay.workerName,
+		Endpoints:    relayEndpoints,
+		Priority:     bestRelay.priority + 10, // Lower priority than direct routes
+		Bandwidth:    bestRelay.bandwidth,
+	}
+
+	e.logger.Info("relay-route-selected", lager.Data{
+		"source":    sourceWorker,
+		"dest":      destWorker,
+		"relay":     bestRelay.workerName,
+		"endpoints": len(relayEndpoints),
+	})
+
+	return route
+}
+
+// relayCandidate represents a potential relay worker
+type relayCandidate struct {
+	workerName string
+	priority   int
+	capacity   int
+	bandwidth  int
+	bridge     db.RelayNetworkBridge
 }
 
 // emitRouteMetrics emits metrics for the selected route

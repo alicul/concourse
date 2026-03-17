@@ -104,6 +104,19 @@ type PrometheusEmitter struct {
 	p2pRouteCacheHits         prometheus.Counter
 	p2pRouteCacheMisses       prometheus.Counter
 
+	// Relay worker metrics
+	relayStreamingStarted      prometheus.Counter
+	relayStreamingSuccess      prometheus.Counter
+	relayStreamingFailure      prometheus.Counter
+	relayStreamingInProgress   prometheus.Gauge
+	relayStreamingDuration     *prometheus.HistogramVec
+	relayStreamingBytes        prometheus.Histogram
+	relayWorkersActive         prometheus.Gauge
+	relayCapacityAvailable     prometheus.Gauge
+	relayCapacityUsed          prometheus.Gauge
+	relayLoadBalancerDecisions *prometheus.CounterVec
+	relayNetworkBridgesActive  prometheus.Gauge
+
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
 
@@ -810,6 +823,132 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(p2pRouteCacheMisses)
 
+	// Relay worker metrics
+	relayStreamingStarted := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_started_total",
+			Help:        "Total number of relay streaming operations started",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayStreamingStarted)
+
+	relayStreamingSuccess := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_success_total",
+			Help:        "Total number of successful relay streaming operations",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayStreamingSuccess)
+
+	relayStreamingFailure := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_failure_total",
+			Help:        "Total number of failed relay streaming operations",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayStreamingFailure)
+
+	relayStreamingInProgress := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_in_progress",
+			Help:        "Number of relay streaming operations currently in progress",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayStreamingInProgress)
+
+	relayStreamingDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_duration_seconds",
+			Help:        "Duration of relay streaming operations in seconds",
+			ConstLabels: attributes,
+			Buckets:     []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+		},
+		[]string{"status"},
+	)
+	prometheus.MustRegister(relayStreamingDuration)
+
+	relayStreamingBytes := prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "streaming_bytes",
+			Help:        "Size of volumes streamed through relay in bytes",
+			ConstLabels: attributes,
+			Buckets:     prometheus.ExponentialBuckets(1024, 2, 20), // 1KB to 1GB
+		},
+	)
+	prometheus.MustRegister(relayStreamingBytes)
+
+	relayWorkersActive := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "workers_active",
+			Help:        "Number of active relay workers",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayWorkersActive)
+
+	relayCapacityAvailable := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "capacity_available",
+			Help:        "Total available relay capacity (max connections)",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayCapacityAvailable)
+
+	relayCapacityUsed := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "capacity_used",
+			Help:        "Currently used relay capacity (active connections)",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayCapacityUsed)
+
+	relayLoadBalancerDecisions := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "load_balancer_decisions_total",
+			Help:        "Total number of relay load balancer decisions by strategy",
+			ConstLabels: attributes,
+		},
+		[]string{"strategy"},
+	)
+	prometheus.MustRegister(relayLoadBalancerDecisions)
+
+	relayNetworkBridgesActive := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   "concourse",
+			Subsystem:   "relay",
+			Name:        "network_bridges_active",
+			Help:        "Number of active network bridges across all relay workers",
+			ConstLabels: attributes,
+		},
+	)
+	prometheus.MustRegister(relayNetworkBridgesActive)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -1147,6 +1286,18 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		p2pRouteCacheHits:         p2pRouteCacheHits,
 		p2pRouteCacheMisses:       p2pRouteCacheMisses,
 
+		relayStreamingStarted:      relayStreamingStarted,
+		relayStreamingSuccess:      relayStreamingSuccess,
+		relayStreamingFailure:      relayStreamingFailure,
+		relayStreamingInProgress:   relayStreamingInProgress,
+		relayStreamingDuration:     relayStreamingDuration,
+		relayStreamingBytes:        relayStreamingBytes,
+		relayWorkersActive:         relayWorkersActive,
+		relayCapacityAvailable:     relayCapacityAvailable,
+		relayCapacityUsed:          relayCapacityUsed,
+		relayLoadBalancerDecisions: relayLoadBalancerDecisions,
+		relayNetworkBridgesActive:  relayNetworkBridgesActive,
+
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
 	}
@@ -1349,6 +1500,40 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.p2pRouteCacheHits.Add(event.Value)
 	case "p2p route cache misses":
 		emitter.p2pRouteCacheMisses.Add(event.Value)
+	case "relay streaming started":
+		emitter.relayStreamingStarted.Add(event.Value)
+	case "relay streaming success":
+		emitter.relayStreamingSuccess.Add(event.Value)
+	case "relay streaming failure":
+		emitter.relayStreamingFailure.Add(event.Value)
+	case "relay streaming in progress":
+		if event.State == "set" {
+			emitter.relayStreamingInProgress.Set(event.Value)
+		} else if event.State == "inc" {
+			emitter.relayStreamingInProgress.Inc()
+		} else if event.State == "dec" {
+			emitter.relayStreamingInProgress.Dec()
+		}
+	case "relay streaming duration":
+		status := event.Attributes["status"]
+		if status != "" {
+			emitter.relayStreamingDuration.WithLabelValues(status).Observe(event.Value)
+		}
+	case "relay streaming bytes":
+		emitter.relayStreamingBytes.Observe(event.Value)
+	case "relay workers active":
+		emitter.relayWorkersActive.Set(event.Value)
+	case "relay capacity available":
+		emitter.relayCapacityAvailable.Set(event.Value)
+	case "relay capacity used":
+		emitter.relayCapacityUsed.Set(event.Value)
+	case "relay load balancer decisions":
+		strategy := event.Attributes["strategy"]
+		if strategy != "" {
+			emitter.relayLoadBalancerDecisions.WithLabelValues(strategy).Inc()
+		}
+	case "relay network bridges active":
+		emitter.relayNetworkBridgesActive.Set(event.Value)
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
