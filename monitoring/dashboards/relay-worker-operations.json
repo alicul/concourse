@@ -1,0 +1,244 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "sum(concourse_relay_workers_active)",
+          "refId": "A"
+        }
+      ],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "red", "value": null},
+          {"color": "yellow", "value": 1},
+          {"color": "green", "value": 3}
+        ]
+      },
+      "title": "Active Relay Workers",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(concourse_relay_streaming_in_progress)",
+          "refId": "A"
+        }
+      ],
+      "title": "Current Relay Streams",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_relay_streaming_success_total[5m])) / (sum(rate(concourse_relay_streaming_success_total[5m])) + sum(rate(concourse_relay_streaming_failure_total[5m]))) * 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Relay Success Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(concourse_relay_network_bridges_active)",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Network Bridges",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "concourse_relay_capacity_used",
+          "legendFormat": "{{relay_worker}} Used",
+          "refId": "A"
+        },
+        {
+          "expr": "concourse_relay_capacity_available",
+          "legendFormat": "{{relay_worker}} Available",
+          "refId": "B"
+        }
+      ],
+      "title": "Relay Worker Capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_relay_streaming_bytes[5m])) by (relay_worker)",
+          "legendFormat": "{{relay_worker}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Relay Bandwidth (Bytes/sec)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (relay_worker, le))",
+          "legendFormat": "{{relay_worker}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (relay_worker, le))",
+          "legendFormat": "{{relay_worker}} p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (relay_worker, le))",
+          "legendFormat": "{{relay_worker}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Relay Streaming Duration Percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_relay_load_balancer_decisions_total[5m])) by (strategy)",
+          "legendFormat": "{{strategy}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Load Balancer Strategy Usage",
+      "type": "piechart"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "id": 9,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (relay_worker, src_network, dst_network) (rate(concourse_relay_streaming_success_total[5m])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top Relay Routes",
+      "type": "table"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 28},
+      "id": 10,
+      "targets": [
+        {
+          "expr": "rate(concourse_relay_streaming_failure_total[5m])",
+          "legendFormat": "{{relay_worker}} - {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Relay Failures by Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 28},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "concourse_relay_streaming_in_progress",
+          "legendFormat": "{{relay_worker}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Concurrent Relay Streams per Worker",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["concourse", "relay", "operations"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": "Prometheus",
+        "definition": "label_values(concourse_relay_workers_active, relay_worker)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Relay Worker",
+        "multi": true,
+        "name": "relay_worker",
+        "options": [],
+        "query": {
+          "query": "label_values(concourse_relay_workers_active, relay_worker)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Concourse Relay Worker Operations",
+  "uid": "relay-worker-ops",
+  "version": 0
+}

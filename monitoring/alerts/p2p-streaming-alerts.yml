@@ -1,0 +1,305 @@
+groups:
+  - name: p2p_streaming_core
+    interval: 30s
+    rules:
+      # P2P Effectiveness Alerts
+      - alert: P2PStreamingDisabled
+        expr: |
+          sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) == 0
+          and sum(rate(concourse_volumes_streaming_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "P2P streaming appears to be disabled or completely failing"
+          description: "No successful P2P streams detected in the last 10 minutes despite active volume streaming. Check P2P configuration and worker connectivity."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#p2p-disabled"
+
+      - alert: LowP2PSuccessRate
+        expr: |
+          (sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) /
+           (sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) +
+            sum(rate(concourse_volumes_streaming_p2p_failure_total[5m])) +
+            sum(rate(concourse_volumes_streaming_atc_success_total[5m])))) < 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "P2P success rate below 50% (current: {{ $value | humanizePercentage }})"
+          description: "P2P streaming success rate is {{ $value | humanizePercentage }}, indicating connectivity or configuration issues. Most streams are falling back to ATC."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#low-success-rate"
+
+      - alert: CriticalP2PSuccessRate
+        expr: |
+          (sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) /
+           (sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) +
+            sum(rate(concourse_volumes_streaming_p2p_failure_total[5m])) +
+            sum(rate(concourse_volumes_streaming_atc_success_total[5m])))) < 0.2
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "P2P success rate critically low ({{ $value | humanizePercentage }})"
+          description: "P2P streaming success rate is only {{ $value | humanizePercentage }}. Immediate investigation required."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#critical-failure"
+
+  - name: p2p_performance
+    interval: 30s
+    rules:
+      - alert: HighP2PStreamingLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(concourse_volumes_streaming_duration_seconds_bucket{method="p2p"}[5m])) by (le)
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+          metric: latency
+        annotations:
+          summary: "P2P streaming p95 latency is high ({{ $value | humanizeDuration }})"
+          description: "95th percentile P2P streaming latency is {{ $value | humanizeDuration }}, indicating performance issues."
+          runbook_url: "https://docs.concourse-ci.org/performance-tuning/p2p-streaming.md#high-latency"
+
+      - alert: ExtremePStreamingLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(concourse_volumes_streaming_duration_seconds_bucket{method="p2p"}[5m])) by (le)
+          ) > 120
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+          metric: latency
+        annotations:
+          summary: "P2P streaming p99 latency extreme ({{ $value | humanizeDuration }})"
+          description: "99th percentile P2P streaming latency is {{ $value | humanizeDuration }}. Some transfers are taking over 2 minutes."
+          runbook_url: "https://docs.concourse-ci.org/performance-tuning/p2p-streaming.md#extreme-latency"
+
+      - alert: LowRouteCacheHitRate
+        expr: |
+          (rate(concourse_p2p_route_cache_hits_total[5m]) /
+           (rate(concourse_p2p_route_cache_hits_total[5m]) +
+            rate(concourse_p2p_route_cache_misses_total[5m]))) < 0.7
+        for: 15m
+        labels:
+          severity: info
+          component: p2p
+          metric: cache
+        annotations:
+          summary: "P2P route cache hit rate low ({{ $value | humanizePercentage }})"
+          description: "Route cache hit rate is {{ $value | humanizePercentage }}, causing increased route calculation overhead."
+          runbook_url: "https://docs.concourse-ci.org/performance-tuning/p2p-streaming.md#route-cache"
+
+  - name: relay_worker_alerts
+    interval: 30s
+    rules:
+      - alert: NoRelayWorkersAvailable
+        expr: |
+          sum(concourse_relay_workers_active) == 0
+          and count(count by (src_network, dst_network)
+            (concourse_network_p2p_connectivity_test_failure_total)) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: relay
+        annotations:
+          summary: "No relay workers available but network segments are disconnected"
+          description: "No active relay workers detected while there are disconnected network segments. P2P streaming between segments will fail."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#no-relays"
+
+      - alert: InsufficientRelayWorkers
+        expr: |
+          sum(concourse_relay_workers_active) < 2
+          and sum(concourse_relay_workers_active) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: relay
+        annotations:
+          summary: "Only {{ $value }} relay worker(s) available"
+          description: "Running with {{ $value }} relay worker(s). Recommended minimum is 2 for redundancy."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#insufficient-relays"
+
+      - alert: RelayWorkerHighLoad
+        expr: |
+          (concourse_relay_capacity_used / concourse_relay_capacity_available) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: relay
+          relay_worker: "{{ $labels.relay_worker }}"
+        annotations:
+          summary: "Relay worker {{ $labels.relay_worker }} at {{ $value | humanizePercentage }} capacity"
+          description: "Relay worker {{ $labels.relay_worker }} is at {{ $value | humanizePercentage }} capacity. Consider adding more relay workers."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#high-load"
+
+      - alert: RelayWorkerOverloaded
+        expr: |
+          (concourse_relay_capacity_used / concourse_relay_capacity_available) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: relay
+          relay_worker: "{{ $labels.relay_worker }}"
+        annotations:
+          summary: "Relay worker {{ $labels.relay_worker }} overloaded ({{ $value | humanizePercentage }})"
+          description: "Relay worker {{ $labels.relay_worker }} is at {{ $value | humanizePercentage }} capacity and may start rejecting connections."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#overloaded"
+
+      - alert: RelayStreamingHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (relay_worker, le)
+          ) > 60
+        for: 10m
+        labels:
+          severity: warning
+          component: relay
+          relay_worker: "{{ $labels.relay_worker }}"
+        annotations:
+          summary: "Relay {{ $labels.relay_worker }} p95 latency high ({{ $value | humanizeDuration }})"
+          description: "Relay worker {{ $labels.relay_worker }} has p95 latency of {{ $value | humanizeDuration }}."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#high-latency"
+
+      - alert: RelayHighFailureRate
+        expr: |
+          (sum(rate(concourse_relay_streaming_failure_total[5m])) by (relay_worker) /
+           (sum(rate(concourse_relay_streaming_success_total[5m])) by (relay_worker) +
+            sum(rate(concourse_relay_streaming_failure_total[5m])) by (relay_worker))) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: relay
+          relay_worker: "{{ $labels.relay_worker }}"
+        annotations:
+          summary: "Relay {{ $labels.relay_worker }} failure rate high ({{ $value | humanizePercentage }})"
+          description: "Relay worker {{ $labels.relay_worker }} has {{ $value | humanizePercentage }} failure rate."
+          runbook_url: "https://docs.concourse-ci.org/runbooks/relay-workers.md#high-failures"
+
+  - name: network_topology_alerts
+    interval: 30s
+    rules:
+      - alert: NetworkTopologyUnstable
+        expr: |
+          rate(concourse_network_topology_changes_total[1h]) > 10
+        for: 30m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "Network topology changing frequently ({{ $value }} changes/hour)"
+          description: "Network topology has changed {{ $value }} times in the last hour, indicating network instability."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#topology-instability"
+
+      - alert: WorkerNetworkIsolated
+        expr: |
+          sum(concourse_network_p2p_connectivity_test_success_total) by (worker) == 0
+          and sum(concourse_network_p2p_connectivity_test_total) by (worker) > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: network
+          worker: "{{ $labels.worker }}"
+        annotations:
+          summary: "Worker {{ $labels.worker }} appears network isolated"
+          description: "Worker {{ $labels.worker }} cannot establish P2P connections to any other workers."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#worker-isolated"
+
+      - alert: NetworkSegmentDisconnected
+        expr: |
+          (sum(concourse_network_p2p_connectivity_test_failure_total) by (src_network, dst_network) /
+           sum(concourse_network_p2p_connectivity_test_total) by (src_network, dst_network)) == 1
+        for: 15m
+        labels:
+          severity: warning
+          component: network
+          src_network: "{{ $labels.src_network }}"
+          dst_network: "{{ $labels.dst_network }}"
+        annotations:
+          summary: "Network segments {{ $labels.src_network }} and {{ $labels.dst_network }} disconnected"
+          description: "No P2P connectivity between {{ $labels.src_network }} and {{ $labels.dst_network }}. Relay workers required."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#segments-disconnected"
+
+      - alert: HighConnectivityTestFailures
+        expr: |
+          rate(concourse_network_p2p_connectivity_test_failure_total[5m]) > 1
+        for: 10m
+        labels:
+          severity: info
+          component: network
+        annotations:
+          summary: "High rate of connectivity test failures"
+          description: "Connectivity tests failing at {{ $value }}/sec, may indicate network issues."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#connectivity-failures"
+
+  - name: volume_streaming_capacity
+    interval: 30s
+    rules:
+      - alert: HighVolumeStreamingRate
+        expr: |
+          sum(rate(concourse_volumes_streaming_total[5m])) > 100
+        for: 10m
+        labels:
+          severity: info
+          component: volumes
+        annotations:
+          summary: "High volume streaming rate ({{ $value }}/sec)"
+          description: "Volume streaming at {{ $value }}/sec. Monitor P2P effectiveness and relay capacity."
+
+      - alert: LargeVolumesBeingStreamed
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(concourse_volumes_streaming_size_bytes_bucket[5m])) by (le)
+          ) > 10737418240  # 10GB
+        for: 15m
+        labels:
+          severity: info
+          component: volumes
+        annotations:
+          summary: "Large volumes being streamed (p95: {{ $value | humanizeBytes }})"
+          description: "95th percentile volume size is {{ $value | humanizeBytes }}. Ensure adequate network capacity."
+
+      - alert: ATCStreamingHighLoad
+        expr: |
+          (sum(rate(concourse_volumes_streaming_atc_success_total[5m])) /
+           sum(rate(concourse_volumes_streaming_total[5m]))) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: atc
+        annotations:
+          summary: "High ATC streaming load ({{ $value | humanizePercentage }})"
+          description: "{{ $value | humanizePercentage }} of volume streams going through ATC. P2P may not be working effectively."
+          runbook_url: "https://docs.concourse-ci.org/troubleshooting/p2p-streaming.md#high-atc-load"
+
+  - name: p2p_security_alerts
+    interval: 30s
+    rules:
+      - alert: UnauthorizedP2PAccess
+        expr: |
+          sum(rate(concourse_p2p_auth_failures_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Unauthorized P2P access attempts detected"
+          description: "Detecting {{ $value }}/sec unauthorized P2P access attempts. Investigate immediately."
+          runbook_url: "https://docs.concourse-ci.org/security/p2p-auth.md"
+
+      - alert: P2PPortScanDetected
+        expr: |
+          sum(rate(concourse_p2p_connection_refused_total[1m])) by (source_ip) > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: security
+          source_ip: "{{ $labels.source_ip }}"
+        annotations:
+          summary: "Possible P2P port scan from {{ $labels.source_ip }}"
+          description: "High rate of connection attempts from {{ $labels.source_ip }}. May indicate port scanning."
+          runbook_url: "https://docs.concourse-ci.org/security/port-scanning.md"

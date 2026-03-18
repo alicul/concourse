@@ -1,0 +1,245 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "iteration": 1234567890123,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) / (sum(rate(concourse_volumes_streaming_p2p_success_total[5m])) + sum(rate(concourse_volumes_streaming_p2p_failure_total[5m])) + sum(rate(concourse_volumes_streaming_atc_success_total[5m]))) * 100",
+          "refId": "A"
+        }
+      ],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "red", "value": null},
+          {"color": "yellow", "value": 60},
+          {"color": "green", "value": 80}
+        ]
+      },
+      "title": "P2P Success Rate",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "pieType": "donut",
+        "tooltipDisplayMode": "single"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_p2p_streaming_by_network_total[5m])) by (network_segment)",
+          "legendFormat": "{{network_segment}}",
+          "refId": "A"
+        }
+      ],
+      "title": "P2P Streaming by Network Segment",
+      "type": "piechart"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(concourse_relay_streaming_in_progress)",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Relay Streams",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(concourse_relay_workers_active)",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Relay Workers",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(concourse_volumes_streaming_duration_seconds_bucket{method=\"p2p\"}[5m])) by (le))",
+          "legendFormat": "P2P p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(concourse_volumes_streaming_duration_seconds_bucket{method=\"p2p\"}[5m])) by (le))",
+          "legendFormat": "P2P p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Relay p50",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(concourse_relay_streaming_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Relay p95",
+          "refId": "D"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(concourse_volumes_streaming_duration_seconds_bucket{method=\"atc\"}[5m])) by (le))",
+          "legendFormat": "ATC p50",
+          "refId": "E"
+        }
+      ],
+      "title": "Streaming Duration Percentiles by Method",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_p2p_routes_by_method_total[5m])) by (method)",
+          "legendFormat": "{{method}}",
+          "refId": "A"
+        }
+      ],
+      "title": "P2P Route Selection by Method",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_network_p2p_connectivity_test_success_total[5m])) by (src_network, dst_network)",
+          "legendFormat": "{{src_network}} → {{dst_network}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Network Connectivity Matrix",
+      "type": "heatmap"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum(rate(concourse_relay_streaming_bytes[5m])) by (relay_worker)",
+          "legendFormat": "{{relay_worker}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Relay Bandwidth Usage by Worker",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 20},
+      "id": 9,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum(rate(concourse_relay_streaming_success_total[5m])) by (relay_worker))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 Relay Workers by Success Rate",
+      "type": "table"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 20},
+      "id": 10,
+      "targets": [
+        {
+          "expr": "concourse_relay_capacity_used / concourse_relay_capacity_available * 100",
+          "legendFormat": "{{relay_worker}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Relay Capacity Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 20},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "rate(concourse_p2p_route_cache_hits_total[5m]) / (rate(concourse_p2p_route_cache_hits_total[5m]) + rate(concourse_p2p_route_cache_misses_total[5m])) * 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Route Cache Hit Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 26},
+      "id": 12,
+      "targets": [
+        {
+          "expr": "increase(concourse_network_topology_changes_total[1h])",
+          "legendFormat": "Topology Changes",
+          "refId": "A"
+        }
+      ],
+      "title": "Network Topology Changes (1h)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["concourse", "p2p", "multi-network", "relay"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Concourse Multi-Network P2P Streaming",
+  "uid": "multi-network-p2p",
+  "version": 0
+}
