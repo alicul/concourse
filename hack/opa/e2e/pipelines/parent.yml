@@ -1,0 +1,53 @@
+---
+resources:
+- name: pipeline-source
+  type: mock
+  source:
+    create_files:
+      child.yml: |
+        ---
+        jobs:
+        - name: hello
+          plan:
+          - task: say-hello
+            config:
+              platform: linux
+              image_resource:
+                type: registry-image
+                source: {repository: busybox}
+              run:
+                path: echo
+                args: ["hello from child pipeline"]
+      self.yml: |
+        ---
+        resources:
+        - name: pipeline-source
+          type: mock
+          source:
+            create_files:
+              dummy.yml: |
+                dummy: true
+        jobs:
+        - name: set-child
+          plan:
+          - get: pipeline-source
+          - set_pipeline: child-pipeline
+            file: pipeline-source/child.yml
+        - name: set-self
+          plan:
+          - get: pipeline-source
+          - set_pipeline: self
+            file: pipeline-source/self.yml
+
+jobs:
+- name: set-child
+  plan:
+  - get: pipeline-source
+  - set_pipeline: child-pipeline
+    file: pipeline-source/child.yml
+
+- name: set-self
+  plan:
+  - get: pipeline-source
+  - set_pipeline: self
+    file: pipeline-source/self.yml

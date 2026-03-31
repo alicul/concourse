@@ -11,6 +11,8 @@ services:
       CONCOURSE_OPA_URL: http://opa:8181/v1/data/concourse/decision
       CONCOURSE_POLICY_CHECK_FILTER_HTTP_METHODS: PUT,POST
 
+      CONCOURSE_POLICY_CHECK_FILTER_ACTION: SetPipeline
+
       # uncomment to configure
       # CONCOURSE_OPA_RESULT_ALLOW_KEY: result.allowed
       # CONCOURSE_OPA_RESULT_SHOULD_BLOCK_KEY: result.block
@@ -23,8 +25,14 @@ services:
     command:
     - run
     - --server
+    - --addr=0.0.0.0:8181
     - --log-level=debug
     - --watch
+    - "--ignore=*.yml"
+    - "--ignore=*.sh"
+    - "--ignore=*.md"
     - /concourse-opa
+    ports:
+    - "8181:8181"
     volumes:
     - ./hack/opa:/concourse-opa
