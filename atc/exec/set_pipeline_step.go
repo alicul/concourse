@@ -212,7 +212,7 @@ func (step *SetPipelineStep) run(ctx context.Context, state RunState, delegate S
 		return true, nil
 	}
 
-	err = delegate.CheckRunSetPipelinePolicy(&atcConfig)
+	err = delegate.CheckRunSetPipelinePolicy(&atcConfig, step.plan.Name)
 	if err != nil {
 		return false, err
 	}

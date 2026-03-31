@@ -53,5 +53,5 @@ type SetPipelineStepDelegateFactory interface {
 type SetPipelineStepDelegate interface {
 	BuildStepDelegate
 	SetPipelineChanged(lager.Logger, bool)
-	CheckRunSetPipelinePolicy(*atc.Config) error
+	CheckRunSetPipelinePolicy(*atc.Config, string) error
 }
