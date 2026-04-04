@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 
+	"code.cloudfoundry.org/lager/v3"
 	"code.cloudfoundry.org/lager/v3/lagerctx"
 	"github.com/concourse/concourse/atc"
 	"github.com/concourse/concourse/atc/db"
@@ -60,15 +61,15 @@ func (worker *Worker) fetchImageForContainer(
 			return FetchedImage{}, fmt.Errorf("create COW volume: %w", err)
 		}
 
+		var metadata ImageMetadata
 		imageMetadataReader, err := worker.streamer.StreamFile(ctx, imageSpec.ImageArtifact, ImageMetadataFile)
 		if err != nil {
-			logger.Error("failed-to-stream-metadata-file", err)
-			return FetchedImage{}, fmt.Errorf("stream image metadata file: %w. Is the image in rootfs format?", err)
-		}
-
-		metadata, err := loadMetadata(imageMetadataReader)
-		if err != nil {
-			return FetchedImage{}, fmt.Errorf("load image metadata: %w", err)
+			logger.Info("metadata-file-not-found-using-defaults", lager.Data{"reason": err.Error()})
+		} else {
+			metadata, err = loadMetadata(imageMetadataReader)
+			if err != nil {
+				return FetchedImage{}, fmt.Errorf("load image metadata: %w", err)
+			}
 		}
 
 		imageURL := url.URL{
