@@ -1,0 +1,62 @@
+# The resource-level tag puts all checks on the AWS worker pool. Every build
+# step also has its network tag. The secondary tags deliberately move the
+# artifact between the two workers in that pool, making the P2P path testable.
+resources:
+  - name: demo-resource
+    type: mock
+    source:
+      mirror_self: true
+    tags: [aws]
+
+jobs:
+  - name: job-1
+    plan:
+      - get: demo-resource
+        tags: [aws, aws-1]
+
+      - task: run-in-aws
+        tags: [aws, aws-2]
+        image: demo-resource
+        config:
+          platform: linux
+          inputs:
+            - name: demo-resource
+          outputs:
+            - name: result
+          run:
+            path: sh
+            args:
+              - -exc
+              - echo aws > result/network
+
+      - put: demo-resource
+        tags: [aws, aws-1]
+        inputs: [result]
+        params:
+          version: aws-job-1
+
+  - name: job-2
+    plan:
+      - get: demo-resource
+        tags: [office, office-1]
+
+      - task: run-in-office
+        tags: [office, office-2]
+        image: demo-resource
+        config:
+          platform: linux
+          inputs:
+            - name: demo-resource
+          outputs:
+            - name: result
+          run:
+            path: sh
+            args:
+              - -exc
+              - echo office > result/network
+
+      - put: demo-resource
+        tags: [office, office-1]
+        inputs: [result]
+        params:
+          version: office-job-2
