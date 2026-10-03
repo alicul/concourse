@@ -146,6 +146,10 @@ func (fs *filesystem) NewVolume(handle string) (FilesystemInitVolume, error) {
 }
 
 func (fs *filesystem) LookupVolume(handle string) (FilesystemLiveVolume, bool, error) {
+	if !filepath.IsLocal(handle) || handle == "." || strings.ContainsAny(handle, `/\`) {
+		return nil, false, fmt.Errorf("invalid volume handle: %q", handle)
+	}
+
 	volumePath := fs.liveVolumePath(handle)
 
 	info, err := os.Stat(volumePath)
@@ -224,6 +228,10 @@ func (fs *filesystem) CleanupOrphanedEntries() error {
 }
 
 func (fs *filesystem) volumeExists(handle string) bool {
+	if !filepath.IsLocal(handle) || handle == "." || strings.ContainsAny(handle, `/\`) {
+		return false
+	}
+
 	// init/ first, then live/: a rename from init to live cannot miss both.
 	if fs.pathKnown(fs.initVolumePath(handle)) {
 		return true
@@ -232,6 +240,10 @@ func (fs *filesystem) volumeExists(handle string) bool {
 }
 
 func (fs *filesystem) initRawVolume(handle string) (*initVolume, error) {
+	if !filepath.IsLocal(handle) || handle == "." || strings.ContainsAny(handle, `/\`) {
+		return nil, fmt.Errorf("invalid volume handle: %q", handle)
+	}
+
 	volumePath := fs.initVolumePath(handle)
 
 	err := os.Mkdir(volumePath, 0755)

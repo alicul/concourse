@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 
+	"github.com/concourse/concourse/v8/atc"
 	"github.com/concourse/concourse/v8/atc/db"
 	"github.com/concourse/concourse/v8/atc/db/dbfakes"
 	"github.com/concourse/concourse/v8/atc/event"
@@ -89,12 +91,45 @@ var _ = Describe("Drainer", func() {
 				got := <-server.Messages
 				Expect(got).To(ContainSubstring("build 123 log"))
 				Expect(got).To(ContainSubstring("build 345 log"))
-				Expect(got).To(ContainSubstring(`get {"version": {"version":"0.0.1"}, "metadata": [{"name":"version","value":"0.0.1"}]`))
+				Expect(got).To(ContainSubstring(`get {"version":{"version":"0.0.1"},"metadata":[{"name":"version","value":"0.0.1"}]}`))
 				Expect(got).To(ContainSubstring("build 123 status"))
 				Expect(got).To(ContainSubstring("build 345 status"))
 				Expect(got).To(ContainSubstring("selected worker: example-worker"))
 				Expect(got).To(ContainSubstring("task initializing"))
 			}, 0.2)
+
+			DescribeTable("encodes resource results as complete JSON", func(eventType, action string, version atc.Version, metadata atc.Metadata) {
+				data, err := json.Marshal(struct {
+					Time     int64        `json:"time"`
+					Version  atc.Version  `json:"version"`
+					Metadata atc.Metadata `json:"metadata"`
+				}{1533744538, version, metadata})
+				Expect(err).NotTo(HaveOccurred())
+				msg := json.RawMessage(data)
+				events := new(dbfakes.FakeEventSource)
+				events.NextReturnsOnCall(0, event.Envelope{Data: &msg, Event: atc.EventType(eventType), EventID: "1"}, nil)
+				events.NextReturns(event.Envelope{}, db.ErrEndOfBuildEventStream)
+				build := new(dbfakes.FakeBuild)
+				build.EventsReturns(events, nil)
+				fakeBuildFactory.GetDrainableBuildsReturns([]db.Build{build}, nil)
+
+				drainer := syslog.NewDrainer("tcp", server.Addr, "test", nil, fakeBuildFactory)
+				Expect(drainer.Run(context.TODO())).To(Succeed())
+				parts := strings.SplitN(<-server.Messages, action+" ", 2)
+				Expect(parts).To(HaveLen(2))
+				var result struct {
+					Version  atc.Version  `json:"version"`
+					Metadata atc.Metadata `json:"metadata"`
+				}
+				Expect(json.Unmarshal([]byte(strings.TrimSpace(parts[1])), &result)).To(Succeed())
+				Expect(result.Version).To(Equal(version))
+				Expect(result.Metadata).To(Equal(metadata))
+			},
+				Entry("get with quotes and backslashes", "finish-get", "get", atc.Version{"ref": `a"b\c`}, atc.Metadata{{Name: `a"b`, Value: "c\\d\ne"}}),
+				Entry("put with quotes and backslashes", "finish-put", "put", atc.Version{"ref": `a"b\c`}, atc.Metadata{{Name: `a"b`, Value: "c\\d\ne"}}),
+				Entry("get with null values", "finish-get", "get", atc.Version(nil), atc.Metadata(nil)),
+				Entry("put with null values", "finish-put", "put", atc.Version(nil), atc.Metadata(nil)),
+			)
 		})
 
 	})

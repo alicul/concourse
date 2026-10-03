@@ -38,6 +38,41 @@ var _ = Describe("Filesystem", func() {
 		Expect(filepath.Join(parentDir, "dead")).To(BeADirectory())
 	})
 
+	DescribeTable("rejects invalid volume handles before accessing the filesystem", func(handle string) {
+		vol, err := fs.NewVolume(handle)
+		Expect(err).To(MatchError(fmt.Sprintf("invalid volume handle: %q", handle)))
+		Expect(vol).To(BeNil())
+		Expect(driver.CreateVolumeCallCount()).To(BeZero())
+
+		live, found, err := fs.LookupVolume(handle)
+		Expect(err).To(MatchError(fmt.Sprintf("invalid volume handle: %q", handle)))
+		Expect(found).To(BeFalse())
+		Expect(live).To(BeNil())
+
+		parent, err := fs.NewVolume("parent-volume")
+		Expect(err).NotTo(HaveOccurred())
+		liveParent, err := parent.Initialize()
+		Expect(err).NotTo(HaveOccurred())
+		child, err := liveParent.NewSubvolume(handle)
+		Expect(err).To(MatchError(fmt.Sprintf("invalid volume handle: %q", handle)))
+		Expect(child).To(BeNil())
+		Expect(driver.CreateCopyOnWriteLayerCallCount()).To(BeZero())
+
+		Expect(fs.CleanupOrphanedEntries()).To(Succeed())
+		volumeExists := driver.RemoveOrphanedResourcesArgsForCall(0)
+		Expect(volumeExists(handle)).To(BeFalse())
+	},
+		Entry("empty", ""),
+		Entry("current directory", "."),
+		Entry("parent directory", ".."),
+		Entry("parent traversal", "../escaped-volume"),
+		Entry("embedded traversal", "nested/../../escaped-volume"),
+		Entry("absolute path", "/escaped-volume"),
+		Entry("nested path", "nested/volume"),
+		Entry("Windows traversal", `..\escaped-volume`),
+		Entry("Windows absolute path", `C:\escaped-volume`),
+	)
+
 	Describe("NewVolume", func() {
 		It("creates a volume", func() {
 			driver.CreateVolumeReturns(nil)
