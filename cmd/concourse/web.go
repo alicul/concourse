@@ -115,6 +115,9 @@ func (cmd *WebCommand) populateSharedFlags() error {
 		cmd.RunCommand.Server.ClientSecret = derivedCredential(signingKey, cmd.RunCommand.Server.ClientID)
 	}
 
+	if cmd.RunCommand.Auth.AuthFlags.Clients == nil {
+		cmd.RunCommand.Auth.AuthFlags.Clients = make(map[string]string)
+	}
 	cmd.RunCommand.Auth.AuthFlags.Clients[cmd.TSACommand.ClientID] = cmd.TSACommand.ClientSecret
 	cmd.RunCommand.Auth.AuthFlags.Clients[cmd.RunCommand.Server.ClientID] = cmd.RunCommand.Server.ClientSecret
 

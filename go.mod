@@ -15,6 +15,7 @@ require (
 	github.com/DataDog/datadog-go/v5 v5.9.0
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.34.0
 	github.com/Masterminds/squirrel v1.5.4
+	github.com/alecthomas/kong v1.16.1
 	github.com/aryann/difflib v0.0.0-20210328193216-ff5ff6dc229b
 	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.31
