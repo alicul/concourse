@@ -1,0 +1,14 @@
+web:
+  bind-port: 8080
+  postgres-host: localhost
+  postgres-port: 5432
+  postgres-user: concourse
+  postgres-database: atc
+  postgres-connect-timeout: 30s
+  vault-url: https://vault.example.com
+  vault-path-prefix: /concourse
+  vault-query-timeout: 10s
+  vault-auth-backend: approle
+  vault-auth-param:
+    role_id: example-role
+    secret_id: replace-me

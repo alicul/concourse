@@ -1,0 +1,9 @@
+worker:
+  name: prototype-worker
+  work-dir: ./worker-data
+  tag: [linux, build]
+  ephemeral: false
+  max-active-tasks: 0
+  tsa-host: [web.example.com:2222]
+  tsa-public-key: ./keys/tsa_host_key.pub
+  tsa-worker-private-key: ./keys/worker_key
