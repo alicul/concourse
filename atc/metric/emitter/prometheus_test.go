@@ -5,12 +5,14 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"code.cloudfoundry.org/lager/v3/lagertest"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/concourse/concourse/v8/atc/metric"
 	"github.com/concourse/concourse/v8/atc/metric/emitter"
@@ -234,5 +236,87 @@ var _ = Describe("PrometheusEmitter", func() {
 			},
 		})
 		Eventually(getPrometheusMetrics()).Should(ContainSubstring("concourse_builds_latest_completed_build_status{invalid_label=\"foo\",jobName=\"\",pipelineName=\"\",prefix_test=\"bar\",prefix_testtwo=\"baz\",teamName=\"team1\"} 1"))
+
+		By("initializing the ten volume streaming route/status combinations")
+		getStreamingHistograms := func() map[string]*dto.Histogram {
+			families, err := prometheus.DefaultGatherer.Gather()
+			Expect(err).NotTo(HaveOccurred())
+			histograms := map[string]*dto.Histogram{}
+			for _, family := range families {
+				if family.GetName() != "concourse_volume_streaming_duration_seconds" {
+					continue
+				}
+				for _, sample := range family.GetMetric() {
+					labels := map[string]string{}
+					for _, label := range sample.GetLabel() {
+						labels[label.GetName()] = label.GetValue()
+					}
+					Expect(labels).To(HaveLen(5)) // route, status, and the three configured constant labels
+					histograms[labels["route"]+"/"+labels["status"]] = sample.GetHistogram()
+				}
+			}
+			return histograms
+		}
+		histograms := getStreamingHistograms()
+		Expect(histograms).To(HaveLen(10))
+		for _, route := range []string{"p2p", "atc_disabled", "atc_unsupported", "atc_group_mismatch", "atc_fallback"} {
+			for _, status := range []string{"success", "error"} {
+				Expect(histograms).To(HaveKey(route + "/" + status))
+				histogram := histograms[route+"/"+status]
+				Expect(histogram.GetSampleCount()).To(BeZero())
+				Expect(histogram.GetSampleSum()).To(BeZero())
+				Expect(histogram.GetBucket()).To(HaveLen(9))
+			}
+		}
+
+		By("exposing 120 series including the +Inf buckets, sums, and counts")
+		seriesCount := 0
+		for _, line := range strings.Split(getPrometheusMetrics(), "\n") {
+			if strings.HasPrefix(line, "concourse_volume_streaming_duration_seconds_") {
+				seriesCount++
+			}
+		}
+		Expect(seriesCount).To(Equal(120))
+
+		By("recording duration, counts, and buckets without labels from individual streams")
+		for _, observation := range []struct {
+			route    string
+			status   string
+			duration float64
+		}{
+			{"p2p", "success", 0.25},
+			{"p2p", "success", 2},
+			{"p2p", "error", 0.75},
+			{"atc_fallback", "success", 10.5},
+			{"worker-specific-route", "success", 1},
+			{"p2p", "worker-specific-error", 1},
+			{"", "", 1},
+		} {
+			prometheusEmitter.Emit(logger, metric.Event{
+				Name:  "volume streaming duration",
+				Value: observation.duration,
+				Attributes: map[string]string{
+					"route":  observation.route,
+					"status": observation.status,
+					"worker": "worker-123",
+					"volume": "volume-456",
+					"error":  "connection to worker-123 failed",
+				},
+			})
+		}
+		histograms = getStreamingHistograms()
+		Expect(histograms).To(HaveLen(10))
+		Expect(histograms["p2p/success"].GetSampleCount()).To(Equal(uint64(2)))
+		Expect(histograms["p2p/success"].GetSampleSum()).To(Equal(2.25))
+		for i, bound := range []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300, 600} {
+			bucket := histograms["p2p/success"].GetBucket()[i]
+			Expect(bucket.GetUpperBound()).To(Equal(bound))
+			Expect(bucket.GetCumulativeCount()).To(Equal([]uint64{0, 1, 1, 2, 2, 2, 2, 2, 2}[i]))
+		}
+		Expect(histograms["p2p/error"].GetSampleCount()).To(Equal(uint64(1)))
+		Expect(histograms["p2p/error"].GetSampleSum()).To(Equal(0.75))
+		Expect(histograms["atc_fallback/success"].GetSampleCount()).To(Equal(uint64(1)))
+		Expect(histograms["atc_fallback/success"].GetSampleSum()).To(Equal(10.5))
+		Expect(histograms["atc_group_mismatch/success"].GetSampleCount()).To(BeZero())
 	})
 })

@@ -173,6 +173,31 @@ func (event ContainerCollectorDuration) Emit(logger lager.Logger) {
 	)
 }
 
+type VolumeStreamingDuration struct {
+	Route    string
+	Duration time.Duration
+	Err      error
+}
+
+func (event VolumeStreamingDuration) Emit(logger lager.Logger) {
+	status := "success"
+	if event.Err != nil {
+		status = "error"
+	}
+
+	Metrics.emit(
+		logger.Session("volume-streaming-duration"),
+		Event{
+			Name:  "volume streaming duration",
+			Value: event.Duration.Seconds(),
+			Attributes: map[string]string{
+				"route":  event.Route,
+				"status": status,
+			},
+		},
+	)
+}
+
 type VolumeCollectorDuration struct {
 	Duration time.Duration
 }

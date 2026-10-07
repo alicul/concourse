@@ -80,6 +80,7 @@ type PrometheusEmitter struct {
 
 	volumesStreamed            prometheus.Counter
 	volumesStreamedViaFallback prometheus.Counter
+	volumeStreamingDuration    *prometheus.HistogramVec
 
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
@@ -588,6 +589,22 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(volumesStreamedViaFallback)
 
+	volumeStreamingDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_duration_seconds",
+			Help:        "Duration of completed volume transfers in seconds, including any P2P fallback",
+			ConstLabels: attributes,
+			Buckets:     []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300, 600},
+		}, []string{"route", "status"},
+	)
+	for _, route := range []string{"p2p", "atc_disabled", "atc_unsupported", "atc_group_mismatch", "atc_fallback"} {
+		for _, status := range []string{"success", "error"} {
+			volumeStreamingDuration.WithLabelValues(route, status)
+		}
+	}
+	prometheus.MustRegister(volumeStreamingDuration)
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -904,6 +921,7 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 
 		volumesStreamed:            volumesStreamed,
 		volumesStreamedViaFallback: volumesStreamedViaFallback,
+		volumeStreamingDuration:    volumeStreamingDuration,
 
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
@@ -1048,6 +1066,19 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.volumesStreamed.Add(event.Value)
 	case "volumes streamed via fallback":
 		emitter.volumesStreamedViaFallback.Add(event.Value)
+	case "volume streaming duration":
+		// Keep label values bounded even if a caller emits an unexpected value.
+		switch event.Attributes["route"] {
+		case "p2p", "atc_disabled", "atc_unsupported", "atc_group_mismatch", "atc_fallback":
+		default:
+			return
+		}
+		switch event.Attributes["status"] {
+		case "success", "error":
+		default:
+			return
+		}
+		emitter.volumeStreamingDuration.WithLabelValues(event.Attributes["route"], event.Attributes["status"]).Observe(event.Value)
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":

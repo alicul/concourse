@@ -96,12 +96,22 @@ func (s Streamer) Stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	return nil
 }
 
-func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.Volume) error {
+func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.Volume) (err error) {
 	logger := lagerctx.FromContext(ctx)
+	start := time.Now()
+	route := "atc_disabled"
+	defer func() {
+		metric.VolumeStreamingDuration{
+			Route:    route,
+			Duration: time.Since(start),
+			Err:      err,
+		}.Emit(logger)
+	}()
 
 	if !s.p2p.Enabled {
 		return s.streamThroughATC(ctx, src, dst)
 	}
+	route = "atc_unsupported"
 	p2pSrc, ok := src.(runtime.P2PVolume)
 	if !ok {
 		return s.streamThroughATC(ctx, src, dst)
@@ -114,15 +124,26 @@ func (s Streamer) stream(ctx context.Context, src runtime.Artifact, dst runtime.
 	srcGroup := p2pSrc.DBVolume().P2PStreamingGroup()
 	dstGroup := p2pDst.DBVolume().P2PStreamingGroup()
 	if srcGroup != dstGroup {
+		route = "atc_group_mismatch"
+		logger.Debug("p2p-streaming-groups-differ", lager.Data{
+			"src-worker":  p2pSrc.DBVolume().WorkerName(),
+			"dest-worker": p2pDst.DBVolume().WorkerName(),
+			"src-group":   srcGroup,
+			"dest-group":  dstGroup,
+		})
 		return s.streamThroughATC(ctx, src, dst)
 	}
 
-	err := s.p2pStream(ctx, p2pSrc, p2pDst)
+	route = "p2p"
+	err = s.p2pStream(ctx, p2pSrc, p2pDst)
 	if err != nil {
+		route = "atc_fallback"
 		// P2P streaming failed - fallback to streaming through ATC (web node)
 		logger.Error("p2p-stream-failed-falling-back-to-atc", err, lager.Data{
 			"src-worker":  p2pSrc.DBVolume().WorkerName(),
 			"dest-worker": p2pDst.DBVolume().WorkerName(),
+			"src-group":   srcGroup,
+			"dest-group":  dstGroup,
 		})
 
 		metric.Metrics.VolumesStreamedViaFallback.Inc()
