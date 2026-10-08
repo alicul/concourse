@@ -5,12 +5,14 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"code.cloudfoundry.org/lager/v3/lagertest"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/concourse/concourse/v8/atc/metric"
 	"github.com/concourse/concourse/v8/atc/metric/emitter"
@@ -179,6 +181,8 @@ var _ = Describe("PrometheusEmitter", func() {
 		prometheusConfig = &emitter.PrometheusConfig{
 			BindIP:   "localhost",
 			BindPort: "9090",
+
+			VolumeStreamingMaxGroups: 3,
 		}
 	})
 
@@ -234,5 +238,219 @@ var _ = Describe("PrometheusEmitter", func() {
 			},
 		})
 		Eventually(getPrometheusMetrics()).Should(ContainSubstring("concourse_builds_latest_completed_build_status{invalid_label=\"foo\",jobName=\"\",pipelineName=\"\",prefix_test=\"bar\",prefix_testtwo=\"baz\",teamName=\"team1\"} 1"))
+
+		By("initializing the ten volume streaming route/status combinations")
+		getStreamingHistograms := func() map[string]*dto.Histogram {
+			families, err := prometheus.DefaultGatherer.Gather()
+			Expect(err).NotTo(HaveOccurred())
+			histograms := map[string]*dto.Histogram{}
+			for _, family := range families {
+				if family.GetName() != "concourse_volume_streaming_duration_seconds" {
+					continue
+				}
+				for _, sample := range family.GetMetric() {
+					labels := map[string]string{}
+					for _, label := range sample.GetLabel() {
+						labels[label.GetName()] = label.GetValue()
+					}
+					Expect(labels).To(HaveLen(5)) // route, status, and the three configured constant labels
+					histograms[labels["route"]+"/"+labels["status"]] = sample.GetHistogram()
+				}
+			}
+			return histograms
+		}
+		histograms := getStreamingHistograms()
+		Expect(histograms).To(HaveLen(10))
+		for _, route := range []string{"p2p", "atc_disabled", "atc_unsupported", "atc_group_mismatch", "atc_fallback"} {
+			for _, status := range []string{"success", "error"} {
+				Expect(histograms).To(HaveKey(route + "/" + status))
+				histogram := histograms[route+"/"+status]
+				Expect(histogram.GetSampleCount()).To(BeZero())
+				Expect(histogram.GetSampleSum()).To(BeZero())
+				Expect(histogram.GetBucket()).To(HaveLen(9))
+			}
+		}
+
+		By("exposing 120 series including the +Inf buckets, sums, and counts")
+		seriesCount := 0
+		for _, line := range strings.Split(getPrometheusMetrics(), "\n") {
+			if strings.HasPrefix(line, "concourse_volume_streaming_duration_seconds_") {
+				seriesCount++
+			}
+		}
+		Expect(seriesCount).To(Equal(120))
+
+		By("recording duration, counts, and buckets without labels from individual streams")
+		for _, observation := range []struct {
+			route    string
+			status   string
+			duration float64
+		}{
+			{"p2p", "success", 0.25},
+			{"p2p", "success", 2},
+			{"p2p", "error", 0.75},
+			{"atc_fallback", "success", 10.5},
+			{"worker-specific-route", "success", 1},
+			{"p2p", "worker-specific-error", 1},
+			{"", "", 1},
+		} {
+			prometheusEmitter.Emit(logger, metric.Event{
+				Name:  "volume streaming duration",
+				Value: observation.duration,
+				Attributes: map[string]string{
+					"route":  observation.route,
+					"status": observation.status,
+					"worker": "worker-123",
+					"volume": "volume-456",
+					"error":  "connection to worker-123 failed",
+				},
+			})
+		}
+		histograms = getStreamingHistograms()
+		Expect(histograms).To(HaveLen(10))
+		Expect(histograms["p2p/success"].GetSampleCount()).To(Equal(uint64(2)))
+		Expect(histograms["p2p/success"].GetSampleSum()).To(Equal(2.25))
+		for i, bound := range []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300, 600} {
+			bucket := histograms["p2p/success"].GetBucket()[i]
+			Expect(bucket.GetUpperBound()).To(Equal(bound))
+			Expect(bucket.GetCumulativeCount()).To(Equal([]uint64{0, 1, 1, 2, 2, 2, 2, 2, 2}[i]))
+		}
+		Expect(histograms["p2p/error"].GetSampleCount()).To(Equal(uint64(1)))
+		Expect(histograms["p2p/error"].GetSampleSum()).To(Equal(0.75))
+		Expect(histograms["atc_fallback/success"].GetSampleCount()).To(Equal(uint64(1)))
+		Expect(histograms["atc_fallback/success"].GetSampleSum()).To(Equal(10.5))
+		Expect(histograms["atc_group_mismatch/success"].GetSampleCount()).To(BeZero())
+
+		// getCounters returns a counter family's samples keyed by the given
+		// label values joined with "/", ignoring the configured constant labels.
+		constLabels := map[string]bool{"invalid_label": true, "prefix_test": true, "prefix_testtwo": true}
+		getCounters := func(name string, labelNames ...string) map[string]float64 {
+			families, err := prometheus.DefaultGatherer.Gather()
+			Expect(err).NotTo(HaveOccurred())
+			counters := map[string]float64{}
+			for _, family := range families {
+				if family.GetName() != name {
+					continue
+				}
+				for _, sample := range family.GetMetric() {
+					labels := map[string]string{}
+					for _, label := range sample.GetLabel() {
+						if !constLabels[label.GetName()] {
+							labels[label.GetName()] = label.GetValue()
+						}
+					}
+					Expect(labels).To(HaveLen(len(labelNames)))
+					values := make([]string, len(labelNames))
+					for i, labelName := range labelNames {
+						values[i] = labels[labelName]
+					}
+					counters[strings.Join(values, "/")] = sample.GetCounter().GetValue()
+				}
+			}
+			return counters
+		}
+		routeLabelNames := []string{"route", "status", "src_group", "dst_group"}
+
+		By("counting transfers per group pair from the same events, with the ungrouped pair pre-initialised")
+		transfers := getCounters("concourse_volume_streaming_transfers_total", routeLabelNames...)
+		Expect(transfers).To(HaveLen(10))
+		Expect(transfers["p2p/success/ungrouped/ungrouped"]).To(Equal(2.0))
+		Expect(transfers["p2p/error/ungrouped/ungrouped"]).To(Equal(1.0))
+		Expect(transfers["atc_fallback/success/ungrouped/ungrouped"]).To(Equal(1.0))
+		Expect(transfers["atc_group_mismatch/success/ungrouped/ungrouped"]).To(BeZero())
+
+		By("adding bytes per group pair and dropping invalid values")
+		for _, observation := range []struct {
+			name                              string
+			route, status, srcGroup, dstGroup string
+			value                             float64
+		}{
+			{"volume streaming bytes", "p2p", "success", "zone-a", "zone-a", 1000},
+			{"volume streaming bytes", "p2p", "success", "zone-a", "zone-a", 500},
+			{"volume streaming bytes", "atc_group_mismatch", "success", "zone-a", "zone-b", 2048},
+			{"volume streaming bytes", "atc_fallback", "error", "", "", 10},
+			{"volume streaming bytes", "p2p", "success", "zone-a", "zone-a", -1},
+			{"volume streaming bytes", "worker-specific-route", "success", "zone-a", "zone-a", 7},
+			{"volume streaming duration", "atc_group_mismatch", "success", "zone-a", "zone-b", 3},
+		} {
+			prometheusEmitter.Emit(logger, metric.Event{
+				Name:  observation.name,
+				Value: observation.value,
+				Attributes: map[string]string{
+					"route":     observation.route,
+					"status":    observation.status,
+					"src_group": observation.srcGroup,
+					"dst_group": observation.dstGroup,
+				},
+			})
+		}
+		bytesTotal := getCounters("concourse_volume_streaming_bytes_total", routeLabelNames...)
+		// Ten pre-initialised ungrouped series (the fallback/error row is one of them) plus the two zone pairs.
+		Expect(bytesTotal).To(HaveLen(12))
+		Expect(bytesTotal["p2p/success/zone-a/zone-a"]).To(Equal(1500.0))
+		Expect(bytesTotal["atc_group_mismatch/success/zone-a/zone-b"]).To(Equal(2048.0))
+		Expect(bytesTotal["atc_fallback/error/ungrouped/ungrouped"]).To(Equal(10.0))
+		transfers = getCounters("concourse_volume_streaming_transfers_total", routeLabelNames...)
+		Expect(transfers).To(HaveLen(11))
+		Expect(transfers["atc_group_mismatch/success/zone-a/zone-b"]).To(Equal(1.0))
+
+		By("collapsing group values beyond the configured cap into 'other'")
+		prometheusEmitter.Emit(logger, metric.Event{
+			Name:       "volume streaming bytes",
+			Value:      99,
+			Attributes: map[string]string{"route": "p2p", "status": "success", "src_group": "zone-c", "dst_group": "zone-c"},
+		})
+		bytesTotal = getCounters("concourse_volume_streaming_bytes_total", routeLabelNames...)
+		Expect(bytesTotal).NotTo(HaveKey("p2p/success/zone-c/zone-c"))
+		Expect(bytesTotal["p2p/success/other/other"]).To(Equal(99.0))
+
+		By("counting transfers without a byte count per route")
+		unmeasured := getCounters("concourse_volume_streaming_unmeasured_transfers_total", "route")
+		Expect(unmeasured).To(HaveLen(5))
+		prometheusEmitter.Emit(logger, metric.Event{Name: "volume streaming unmeasured", Value: 1, Attributes: map[string]string{"route": "p2p"}})
+		prometheusEmitter.Emit(logger, metric.Event{Name: "volume streaming unmeasured", Value: 1, Attributes: map[string]string{"route": "worker-specific-route"}})
+		unmeasured = getCounters("concourse_volume_streaming_unmeasured_transfers_total", "route")
+		Expect(unmeasured).To(HaveLen(5))
+		Expect(unmeasured["p2p"]).To(Equal(1.0))
+
+		By("recording per-worker bytes and transfers one side at a time")
+		for _, observation := range []struct {
+			worker, direction, status string
+			value                     float64
+		}{
+			{"worker-a", "sent", "success", 1000},
+			{"worker-b", "received", "success", 1000},
+			{"worker-a", "sent", "error", 0},
+			{"worker-a", "worker-specific-direction", "success", 5},
+			{"worker-a", "sent", "success", -1},
+			{"", "sent", "success", 5},
+		} {
+			prometheusEmitter.Emit(logger, metric.Event{
+				Name:       "volume streaming worker",
+				Value:      observation.value,
+				Attributes: map[string]string{"worker": observation.worker, "direction": observation.direction, "status": observation.status},
+			})
+		}
+		workerBytes := getCounters("concourse_volume_streaming_worker_bytes_total", "worker", "direction")
+		Expect(workerBytes).To(Equal(map[string]float64{"worker-a/sent": 1000, "worker-b/received": 1000}))
+		workerTransfers := getCounters("concourse_volume_streaming_worker_transfers_total", "worker", "direction", "status")
+		Expect(workerTransfers).To(Equal(map[string]float64{"worker-a/sent/success": 1, "worker-a/sent/error": 1, "worker-b/received/success": 1}))
+
+		By("deleting the series of workers that left the fleet and keeping the rest")
+		prometheusEmitter.(*emitter.PrometheusEmitter).GarbageCollectStreamingWorkers(map[string]struct{}{"worker-b": {}})
+		workerBytes = getCounters("concourse_volume_streaming_worker_bytes_total", "worker", "direction")
+		Expect(workerBytes).To(Equal(map[string]float64{"worker-b/received": 1000}))
+		workerTransfers = getCounters("concourse_volume_streaming_worker_transfers_total", "worker", "direction", "status")
+		Expect(workerTransfers).To(Equal(map[string]float64{"worker-b/received/success": 1}))
+
+		By("tracking a returning worker again")
+		prometheusEmitter.Emit(logger, metric.Event{
+			Name:       "volume streaming worker",
+			Value:      7,
+			Attributes: map[string]string{"worker": "worker-a", "direction": "received", "status": "success"},
+		})
+		prometheusEmitter.(*emitter.PrometheusEmitter).GarbageCollectStreamingWorkers(map[string]struct{}{"worker-a": {}})
+		workerBytes = getCounters("concourse_volume_streaming_worker_bytes_total", "worker", "direction")
+		Expect(workerBytes).To(Equal(map[string]float64{"worker-a/received": 7}))
 	})
 })

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"code.cloudfoundry.org/lager/v3"
 	"code.cloudfoundry.org/lager/v3/lagerctx"
@@ -39,7 +40,10 @@ type Repository interface {
 	StreamIn(ctx context.Context, handle string, path string, encoding baggageclaim.Encoding, limitInMB float64, stream io.Reader) (bool, error)
 	StreamOut(ctx context.Context, handle string, path string, encoding baggageclaim.Encoding, dest io.Writer) error
 
-	StreamP2pOut(ctx context.Context, handle string, path string, encoding baggageclaim.Encoding, streamInURL string) error
+	// StreamP2pOut streams a volume path straight to another worker's stream-in
+	// endpoint and returns the number of compressed bytes it sent, so the web
+	// node can account for traffic it never relays.
+	StreamP2pOut(ctx context.Context, handle string, path string, encoding baggageclaim.Encoding, streamInURL string) (int64, error)
 
 	VolumeParent(ctx context.Context, handle string) (Volume, bool, error)
 
@@ -567,12 +571,16 @@ func (repo *repository) StreamOut(ctx context.Context,
 	return ErrUnsupportedStreamEncoding
 }
 
+// StreamP2pOut compresses the volume path on this worker and PUTs it to the
+// destination worker's stream-in URL. It returns the compressed bytes handed to
+// the HTTP transport, a partial count when the transfer failed midway, and the
+// error if any.
 func (repo *repository) StreamP2pOut(ctx context.Context,
 	handle string,
 	path string,
 	encoding baggageclaim.Encoding,
 	streamInURL string,
-) error {
+) (int64, error) {
 	ctx, span := tracing.StartSpan(ctx, "volumeRepository.StreamP2pOut", tracing.Attrs{
 		"volume":   handle,
 		"sub-path": path,
@@ -592,19 +600,19 @@ func (repo *repository) StreamP2pOut(ctx context.Context,
 	volume, found, err := repo.filesystem.LookupVolume(handle)
 	if err != nil {
 		logger.Error("failed-to-lookup-volume", err)
-		return err
+		return 0, err
 	}
 
 	if !found {
 		logger.Info("volume-not-found")
-		return ErrVolumeDoesNotExist
+		return 0, ErrVolumeDoesNotExist
 	}
 
 	srcPath := filepath.Join(volume.DataPath(), filepath.Clean("/"+path))
 	if !strings.HasPrefix(srcPath, volume.DataPath()) {
 		err = fmt.Errorf("path '%s' is outside the volume data path '%s'", srcPath, volume.DataPath())
 		logger.Error("path-outside-volume", err)
-		return err
+		return 0, err
 	}
 
 	logger = logger.WithData(lager.Data{
@@ -614,7 +622,7 @@ func (repo *repository) StreamP2pOut(ctx context.Context,
 	isPrivileged, err := volume.LoadPrivileged()
 	if err != nil {
 		logger.Error("failed-to-check-if-volume-is-privileged", err)
-		return err
+		return 0, err
 	}
 
 	logger.Debug("p2p-streaming-start", lager.Data{"streamInURL": streamInURL})
@@ -641,25 +649,30 @@ func (repo *repository) StreamP2pOut(ctx context.Context,
 		writer.Close()
 	}()
 
+	// Everything the HTTP transport pulls from the pipe is what goes on the
+	// wire towards the destination, so count it there.
+	counted := &countingReader{reader: reader}
+
 	client := &http.Client{}
-	req, err := http.NewRequest(http.MethodPut, streamInURL, reader)
+	req, err := http.NewRequest(http.MethodPut, streamInURL, counted)
 	if err != nil {
 		logger.Error("failed-to-create-p2p-stream-in-request", err)
-		return err
+		return 0, err
 	}
 
 	req.Header.Set("Content-Encoding", string(encoding))
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return counted.Count(), err
 	}
 
 	defer resp.Body.Close()
 
-	logger.Debug("p2p-streaming-end", lager.Data{"code": resp.StatusCode})
+	bytesSent := counted.Count()
+	logger.Debug("p2p-streaming-end", lager.Data{"code": resp.StatusCode, "bytes": bytesSent})
 
 	if resp.StatusCode == http.StatusNoContent {
-		return nil
+		return bytesSent, nil
 	}
 
 	// Upon stream-in failure, decode error message from stream-in api.
@@ -671,7 +684,7 @@ func (repo *repository) StreamP2pOut(ctx context.Context,
 		errorResponse.Message = err.Error()
 	}
 
-	return fmt.Errorf("p2p-stream-in %d: %s", resp.StatusCode, errorResponse.Message)
+	return bytesSent, fmt.Errorf("p2p-stream-in %d: %s", resp.StatusCode, errorResponse.Message)
 }
 
 func (repo *repository) VolumeParent(ctx context.Context, handle string) (Volume, bool, error) {
@@ -776,4 +789,25 @@ func NewLimitedReader(limit int, reader io.Reader) *LimitedReader {
 		read:       0,
 		underlying: reader,
 	}
+}
+
+// countingReader counts the bytes read through it so StreamP2pOut can report
+// how much it sent. The count is atomic because net/http reads a request body
+// on its own goroutine and may still be draining it when Do returns early on
+// an error response.
+type countingReader struct {
+	reader io.Reader
+	n      atomic.Int64
+}
+
+// Read forwards to the wrapped reader and adds the bytes returned to the count.
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.n.Add(int64(n))
+	return n, err
+}
+
+// Count returns the number of bytes read so far.
+func (r *countingReader) Count() int64 {
+	return r.n.Load()
 }

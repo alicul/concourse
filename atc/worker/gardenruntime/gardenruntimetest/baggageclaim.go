@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/concourse/concourse/v8/atc/runtime/runtimetest"
 	"github.com/concourse/concourse/v8/worker/baggageclaim"
@@ -174,14 +175,36 @@ func (v Volume) GetStreamInP2pUrl(_ context.Context, path string) (string, error
 	return server.URL + "/" + path, nil
 }
 
-func (v Volume) StreamP2pOut(ctx context.Context, path string, streamInURL string, encoding baggageclaim.Encoding) error {
+// StreamP2pOut posts the volume's content to streamInURL the way a worker
+// would and reports the number of bytes posted, so streamer tests can check
+// byte accounting end to end.
+func (v Volume) StreamP2pOut(ctx context.Context, path string, streamInURL string, encoding baggageclaim.Encoding) (int64, error) {
 	stream, err := v.StreamOut(ctx, path, encoding)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer stream.Close()
-	_, err = http.Post(streamInURL, "application/gzip", stream)
-	return err
+	counted := &countingReader{Reader: stream}
+	resp, err := http.Post(streamInURL, "application/gzip", counted)
+	if err != nil {
+		return counted.n.Load(), err
+	}
+	resp.Body.Close()
+	return counted.n.Load(), nil
+}
+
+// countingReader counts the bytes read through it. The count is atomic because
+// net/http reads request bodies on its own goroutine.
+type countingReader struct {
+	io.Reader
+	n atomic.Int64
+}
+
+// Read forwards to the wrapped reader and adds the bytes returned to the count.
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.n.Add(int64(n))
+	return n, err
 }
 
 func (v Volume) Destroy(_ context.Context) error {

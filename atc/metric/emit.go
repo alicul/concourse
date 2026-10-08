@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"code.cloudfoundry.org/lager/v3"
@@ -35,6 +36,10 @@ type EmitterFactory interface {
 }
 
 type Monitor struct {
+	// workerLiveness is set once the web command has a worker cache; see
+	// SetWorkerLiveness. Atomic because the emitter's GC goroutine reads it.
+	workerLiveness atomic.Pointer[WorkerLivenessFunc]
+
 	emitter          Emitter
 	eventHost        string
 	eventAttributes  map[string]string
@@ -91,6 +96,25 @@ type Monitor struct {
 }
 
 var Metrics = NewMonitor()
+
+// WorkerLivenessFunc reports the names of the workers currently registered in
+// the database. The Prometheus emitter uses it to drop the per-worker streaming
+// series of workers that no longer exist. Heartbeat recency cannot serve that
+// purpose: heartbeats only reach the web node a worker's TSA forwards to.
+type WorkerLivenessFunc func() (map[string]struct{}, error)
+
+// SetWorkerLiveness installs the liveness source once the worker cache exists.
+func (m *Monitor) SetWorkerLiveness(liveness WorkerLivenessFunc) {
+	m.workerLiveness.Store(&liveness)
+}
+
+// WorkerLiveness returns the installed liveness source, or nil before wiring.
+func (m *Monitor) WorkerLiveness() WorkerLivenessFunc {
+	if liveness := m.workerLiveness.Load(); liveness != nil {
+		return *liveness
+	}
+	return nil
+}
 
 func NewMonitor() *Monitor {
 	return &Monitor{

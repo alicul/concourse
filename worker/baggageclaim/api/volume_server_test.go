@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/concourse/concourse/v8/go-archive/tarfs"
@@ -1231,11 +1233,19 @@ var _ = Describe("Volume Server", func() {
 			myVolume    volume.Volume
 			encoding    string
 			otherWorker *httptest.Server
+
+			otherWorkerBytes atomic.Int64
 		)
 
 		JustBeforeEach(func() {
 			// Init a fake remote worker
-			otherWorker = httptest.NewServer(handler)
+			otherWorkerBytes.Store(0)
+			otherWorker = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Count what the remote side receives without asserting on it: an
+				// aborted upload is a legitimate case here.
+				r.Body = &countingBody{ReadCloser: r.Body, n: &otherWorkerBytes}
+				handler.ServeHTTP(w, r)
+			}))
 
 			// Create a volume to stream out
 			body := &bytes.Buffer{}
@@ -1273,6 +1283,7 @@ var _ = Describe("Volume Server", func() {
 
 			Expect(recorder.Code).To(Equal(200)) // status code should always be 200, error is in body
 			Expect(recorder.Body.String()).To(MatchRegexp("failed to compress source volume: .*: (no such file or directory|The system cannot find the file specified)"))
+			Expect(recorder.Result().Trailer.Get(baggageclaim.StreamP2pOutBytesTrailer)).To(MatchRegexp(`^\d+$`), "reports the partial byte count even on failure")
 		})
 
 		Context("when streaming a file", func() {
@@ -1293,6 +1304,8 @@ var _ = Describe("Volume Server", func() {
 				handler.ServeHTTP(streamP2pOutRecorder, streamP2pOutRequest)
 				Expect(streamP2pOutRecorder.Code).To(Equal(200))
 				Expect(strings.TrimSpace(streamP2pOutRecorder.Body.String())).To(Equal("ok"))
+				Expect(otherWorkerBytes.Load()).To(BeNumerically(">", 0))
+				Expect(streamP2pOutRecorder.Result().Trailer.Get(baggageclaim.StreamP2pOutBytesTrailer)).To(Equal(strconv.FormatInt(otherWorkerBytes.Load(), 10)), "reports the bytes sent as a trailer")
 
 				destContentsPath := filepath.Join(volumeDir, "live", myVolume.Handle, "volume", "dest-path", "some-file")
 				Expect(destContentsPath).To(BeAnExistingFile())
@@ -1338,6 +1351,8 @@ var _ = Describe("Volume Server", func() {
 				handler.ServeHTTP(streamP2pOutRecorder, streamP2pOutRequest)
 				Expect(streamP2pOutRecorder.Code).To(Equal(200))
 				Expect(strings.TrimSpace(streamP2pOutRecorder.Body.String())).To(Equal("ok"))
+				Expect(otherWorkerBytes.Load()).To(BeNumerically(">", 0))
+				Expect(streamP2pOutRecorder.Result().Trailer.Get(baggageclaim.StreamP2pOutBytesTrailer)).To(Equal(strconv.FormatInt(otherWorkerBytes.Load(), 10)), "reports the bytes sent as a trailer")
 
 				someContentsPath := filepath.Join(volumeDir, "live", myVolume.Handle, "volume", "dest-path", "sub", "some-file")
 				Expect(someContentsPath).To(BeAnExistingFile())
@@ -1388,4 +1403,16 @@ func encStrategy(strategy map[string]string) *json.RawMessage {
 	msg := json.RawMessage(bytes)
 
 	return &msg
+}
+
+// countingBody counts the bytes a handler reads from a request body.
+type countingBody struct {
+	io.ReadCloser
+	n *atomic.Int64
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.n.Add(int64(n))
+	return n, err
 }

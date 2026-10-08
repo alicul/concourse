@@ -629,22 +629,30 @@ func (vs *VolumeServer) StreamP2pOut(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "plain/text")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Declaring the trailer before the first write makes the response chunked
+	// and lets the byte count follow the body. Web nodes that predate the
+	// trailer keep reading the unchanged "ok"/error body.
+	w.Header().Set("Trailer", baggageclaim.StreamP2pOutBytesTrailer)
 
-	doneChan := make(chan error, 1)
-	go func(doneChan chan<- error) {
-		err := vs.volumeRepo.StreamP2pOut(ctx, handle, subPath, baggageclaim.Encoding(encoding), streamInURL)
+	type streamResult struct {
+		bytesSent int64
+		err       error
+	}
+	doneChan := make(chan streamResult, 1)
+	go func() {
+		bytesSent, err := vs.volumeRepo.StreamP2pOut(ctx, handle, subPath, baggageclaim.Encoding(encoding), streamInURL)
 		if err != nil {
 			hLog.Error("failed-to-stream-out", err)
-			doneChan <- fmt.Errorf("%s: %w", ErrStreamP2pOutFailed, err)
-		} else {
-			close(doneChan)
+			err = fmt.Errorf("%s: %w", ErrStreamP2pOutFailed, err)
 		}
-	}(doneChan)
+		doneChan <- streamResult{bytesSent: bytesSent, err: err}
+	}()
 
 	// Send a white space to client as an indicator of in-progress every 30 seconds.
 	// After source worker finishes sending volume to dest worker, send client "ok"
-	// for success or an error message.
+	// for success or an error message, followed by the byte count as a trailer.
 	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-tick.C:
@@ -652,13 +660,15 @@ func (vs *VolumeServer) StreamP2pOut(w http.ResponseWriter, req *http.Request) {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-		case err := <-doneChan:
-			if err != nil {
-				fmt.Fprintf(w, "%s", err.Error())
+		case result := <-doneChan:
+			if result.err != nil {
+				fmt.Fprintf(w, "%s", result.err.Error())
 			} else {
 				fmt.Fprintf(w, "ok")
 			}
-			tick.Stop()
+			// Set after the final body write so the value is sent only as a
+			// trailer and not duplicated into the response headers.
+			w.Header().Set(baggageclaim.StreamP2pOutBytesTrailer, strconv.FormatInt(result.bytesSent, 10))
 			return
 		}
 	}

@@ -13,6 +13,17 @@ const ZstdEncoding Encoding = "zstd"
 const S2Encoding Encoding = "s2"
 const RawEncoding Encoding = "raw"
 
+// StreamP2pOutBytesTrailer is the HTTP trailer on a stream-p2p-out response that
+// carries the number of compressed bytes the source worker sent to the
+// destination. It travels as a trailer so the plain "ok"/error body stays
+// unchanged for web nodes that predate it, and workers that predate it simply
+// never send it.
+const StreamP2pOutBytesTrailer = "X-Baggageclaim-Streamed-Bytes"
+
+// UnknownStreamedBytes is the byte count reported by StreamP2pOut when the
+// source worker did not say how many bytes it sent.
+const UnknownStreamedBytes int64 = -1
+
 const (
 	StrategyEmpty       = "empty"
 	StrategyCopyOnWrite = "cow"
@@ -126,7 +137,10 @@ type Volume interface {
 
 	// StreamP2pOut streams the contents of this volume directly to another
 	// baggageclaim server on the same network.
-	StreamP2pOut(ctx context.Context, path string, streamInURL string, encoding Encoding) error
+	//
+	// It returns the number of compressed bytes the server reported sending, or
+	// UnknownStreamedBytes when the server predates the byte count trailer.
+	StreamP2pOut(ctx context.Context, path string, streamInURL string, encoding Encoding) (int64, error)
 }
 
 // Volumes represents a list of Volume object.

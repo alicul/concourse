@@ -577,6 +577,23 @@ var _ = Describe("Baggageclaim Client", func() {
 		})
 
 		Context("when api succeeds", func() {
+			// respondWithTrailer streams a stream-p2p-out style body and, when
+			// bytesSent is non-empty, reports it the way a worker does: declared
+			// before the body and set after it.
+			respondWithTrailer := func(body, bytesSent string) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					if bytesSent != "" {
+						w.Header().Set("Trailer", baggageclaim.StreamP2pOutBytesTrailer)
+					}
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(body))
+					Expect(err).ToNot(HaveOccurred())
+					if bytesSent != "" {
+						w.Header().Set(baggageclaim.StreamP2pOutBytesTrailer, bytesSent)
+					}
+				}
+			}
+
 			Context("when p2p streaming succeeds", func() {
 				BeforeEach(func() {
 					bcServer.AppendHandlers(
@@ -586,9 +603,40 @@ var _ = Describe("Baggageclaim Client", func() {
 						),
 					)
 				})
-				It("should succeed", func() {
-					err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+				It("should succeed without a byte count from a worker that predates the trailer", func() {
+					bytesSent, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
 					Expect(err).ToNot(HaveOccurred())
+					Expect(bytesSent).To(Equal(baggageclaim.UnknownStreamedBytes))
+				})
+			})
+			Context("when p2p streaming succeeds and the worker reports its byte count", func() {
+				BeforeEach(func() {
+					bcServer.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("PUT", "/volumes/some-handle/stream-p2p-out"),
+							respondWithTrailer("\n\n\nok", "1234"),
+						),
+					)
+				})
+				It("should return the byte count", func() {
+					bytesSent, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+					Expect(err).ToNot(HaveOccurred())
+					Expect(bytesSent).To(Equal(int64(1234)))
+				})
+			})
+			Context("when the worker reports a malformed byte count", func() {
+				BeforeEach(func() {
+					bcServer.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("PUT", "/volumes/some-handle/stream-p2p-out"),
+							respondWithTrailer("ok", "lots"),
+						),
+					)
+				})
+				It("should succeed without a byte count", func() {
+					bytesSent, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+					Expect(err).ToNot(HaveOccurred())
+					Expect(bytesSent).To(Equal(baggageclaim.UnknownStreamedBytes))
 				})
 			})
 			Context("when p2p streaming fails", func() {
@@ -596,14 +644,15 @@ var _ = Describe("Baggageclaim Client", func() {
 					bcServer.AppendHandlers(
 						ghttp.CombineHandlers(
 							ghttp.VerifyRequest("PUT", "/volumes/some-handle/stream-p2p-out"),
-							ghttp.RespondWith(http.StatusOK, "\n\n\nsome-error"),
+							respondWithTrailer("\n\n\nsome-error", "12"),
 						),
 					)
 				})
-				It("should fail", func() {
-					err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+				It("should fail and still report the partial byte count", func() {
+					bytesSent, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
 					Expect(err).To(HaveOccurred())
 					Expect(err).To(Equal(errors.New("some-error")))
+					Expect(bytesSent).To(Equal(int64(12)))
 				})
 			})
 		})
@@ -611,7 +660,7 @@ var _ = Describe("Baggageclaim Client", func() {
 		Context("when error occurs", func() {
 			It("returns API error message", func() {
 				mockErrorResponse("PUT", "/volumes/some-handle/stream-p2p-out", "failed to p2p stream out", http.StatusInternalServerError)
-				err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+				_, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("failed to p2p stream out"))
 			})
@@ -620,7 +669,7 @@ var _ = Describe("Baggageclaim Client", func() {
 		Context("when an unknown error occurs", func() {
 			It("returns HTTP status and the body", func() {
 				mockUnknownErrorResponse("PUT", "/volumes/some-handle/stream-p2p-out", "failed to p2p stream out", http.StatusInternalServerError)
-				err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
+				_, err := vol.StreamP2pOut(context.TODO(), "some-dest-path", "http://some-url", "gzip")
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("unexpected baggageclaim error response: 500 Internal Server Error: failed to p2p stream out"))
 			})

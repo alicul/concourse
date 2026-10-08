@@ -1154,6 +1154,7 @@ var _ = Describe("Repository", func() {
 		var (
 			server             *httptest.Server
 			streamErr          error
+			bytesSent          int64
 			serverCalled       bool
 			serverResponseCode int
 			serverReadBytes    []byte
@@ -1184,7 +1185,7 @@ var _ = Describe("Repository", func() {
 				serverReadBytes, err = io.ReadAll(r.Body)
 				Expect(err).ToNot(HaveOccurred())
 			}))
-			streamErr = repository.StreamP2pOut(context.Background(), "some-handle", filepath.Base(tempFile.Name()), baggageclaim.GzipEncoding, server.URL)
+			bytesSent, streamErr = repository.StreamP2pOut(context.Background(), "some-handle", filepath.Base(tempFile.Name()), baggageclaim.GzipEncoding, server.URL)
 		})
 
 		Context("when lookup volume fails", func() {
@@ -1252,6 +1253,9 @@ var _ = Describe("Repository", func() {
 						Expect(streamErr).To(HaveOccurred())
 						Expect(streamErr.Error()).To(ContainSubstring("p2p-stream-in 500:"))
 					})
+					It("reports a non-negative byte count", func() {
+						Expect(bytesSent).To(BeNumerically(">=", 0))
+					})
 					It("should http request", func() {
 						Expect(serverCalled).To(BeTrue())
 					})
@@ -1274,6 +1278,10 @@ var _ = Describe("Repository", func() {
 						Expect(len(serverReadBytes)).To(Equal(len(b.Bytes())))
 						n := len(serverReadBytes)
 						Expect(serverReadBytes[:n]).To(Equal(b.Bytes()[:n]))
+					})
+					It("reports the bytes it sent", func() {
+						Expect(bytesSent).To(BeNumerically(">", 0))
+						Expect(bytesSent).To(Equal(int64(len(serverReadBytes))))
 					})
 				})
 			})
@@ -1419,7 +1427,7 @@ var _ = Describe("Repository", func() {
 
 		DescribeTable("source path stays within the volume",
 			func(inputPath string) {
-				err := traversalRepo.StreamP2pOut(context.Background(), "some-handle", inputPath,
+				_, err := traversalRepo.StreamP2pOut(context.Background(), "some-handle", inputPath,
 					baggageclaim.GzipEncoding, streamInServer.URL)
 				Expect(err).ToNot(HaveOccurred())
 

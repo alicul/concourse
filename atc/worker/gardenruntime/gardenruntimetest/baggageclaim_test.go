@@ -23,8 +23,9 @@ func TestVolume_P2PStreamInOut_Root(t *testing.T) {
 	url, err := volume2.GetStreamInP2pUrl(ctx, ".")
 	require.NoError(t, err)
 
-	err = volume1.StreamP2pOut(ctx, ".", url, baggageclaim.GzipEncoding)
+	bytesSent, err := volume1.StreamP2pOut(ctx, ".", url, baggageclaim.GzipEncoding)
 	require.NoError(t, err)
 
 	require.Equal(t, content, volume2.Content)
+	require.Greater(t, bytesSent, int64(0), "reports the bytes it posted")
 }

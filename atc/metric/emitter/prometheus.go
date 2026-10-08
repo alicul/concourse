@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -78,8 +79,23 @@ type PrometheusEmitter struct {
 
 	checksEnqueued prometheus.Counter
 
-	volumesStreamed            prometheus.Counter
-	volumesStreamedViaFallback prometheus.Counter
+	volumesStreamed                prometheus.Counter
+	volumesStreamedViaFallback     prometheus.Counter
+	volumeStreamingDuration        *prometheus.HistogramVec
+	volumeStreamingTransfers       *prometheus.CounterVec
+	volumeStreamingBytes           *prometheus.CounterVec
+	volumeStreamingUnmeasured      *prometheus.CounterVec
+	volumeStreamingWorkerBytes     *prometheus.CounterVec
+	volumeStreamingWorkerTransfers *prometheus.CounterVec
+
+	// streamingGroups holds the distinct group label values seen so far, capped
+	// at maxStreamingGroups; only Emit touches it, on the monitor's single
+	// emission goroutine. streamingWorkers tracks workers with streaming series
+	// for garbage collection and is guarded by mu.
+	streamingGroups       map[string]struct{}
+	streamingGroupsCapped bool
+	maxStreamingGroups    int
+	streamingWorkers      map[string]struct{}
 
 	getStepCacheHits       prometheus.Counter
 	streamedResourceCaches prometheus.Counter
@@ -110,6 +126,8 @@ type PrometheusEmitter struct {
 type PrometheusConfig struct {
 	BindIP   string `long:"prometheus-bind-ip" description:"IP to listen on to expose Prometheus metrics."`
 	BindPort string `long:"prometheus-bind-port" description:"Port to listen on to expose Prometheus metrics."`
+
+	VolumeStreamingMaxGroups int `long:"prometheus-volume-streaming-max-groups" default:"32" description:"Maximum number of distinct P2P streaming group label values on the volume streaming metrics. Further groups are labelled 'other' to keep the number of series bounded."`
 }
 
 // The most natural data type to hold the labels is a set because each worker can have multiple but
@@ -588,6 +606,75 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 	)
 	prometheus.MustRegister(volumesStreamedViaFallback)
 
+	volumeStreamingDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_duration_seconds",
+			Help:        "Duration of completed volume transfers in seconds, including any P2P fallback",
+			ConstLabels: attributes,
+			Buckets:     []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300, 600},
+		}, []string{"route", "status"},
+	)
+	streamingRouteLabels := []string{"route", "status", "src_group", "dst_group"}
+	volumeStreamingTransfers := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_transfers_total",
+			Help:        "Completed volume transfer operations by route, outcome and streaming group pair",
+			ConstLabels: attributes,
+		}, streamingRouteLabels,
+	)
+	volumeStreamingBytes := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_bytes_total",
+			Help:        "Compressed bytes moved by volume transfers on their final route, by outcome and streaming group pair",
+			ConstLabels: attributes,
+		}, streamingRouteLabels,
+	)
+	volumeStreamingUnmeasured := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_unmeasured_transfers_total",
+			Help:        "Volume transfers whose byte count was not reported, such as P2P transfers from workers predating the byte count trailer",
+			ConstLabels: attributes,
+		}, []string{"route"},
+	)
+	// Pre-initialise the fixed label sets and the ungrouped pair so idle
+	// deployments expose well-defined zero series from the first scrape.
+	for _, route := range metric.VolumeStreamingRoutes {
+		volumeStreamingUnmeasured.WithLabelValues(route)
+		for _, status := range []string{"success", "error"} {
+			volumeStreamingDuration.WithLabelValues(route, status)
+			volumeStreamingTransfers.WithLabelValues(route, status, metric.UngroupedStreamingGroup, metric.UngroupedStreamingGroup)
+			volumeStreamingBytes.WithLabelValues(route, status, metric.UngroupedStreamingGroup, metric.UngroupedStreamingGroup)
+		}
+	}
+	prometheus.MustRegister(volumeStreamingDuration, volumeStreamingTransfers, volumeStreamingBytes, volumeStreamingUnmeasured)
+
+	volumeStreamingWorkerBytes := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_worker_bytes_total",
+			Help:        "Compressed bytes each worker sent or received through volume streaming",
+			ConstLabels: attributes,
+		}, []string{"worker", "direction"},
+	)
+	volumeStreamingWorkerTransfers := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "concourse",
+			Name:        "volume_streaming_worker_transfers_total",
+			Help:        "Volume transfers each worker took part in, by direction and outcome",
+			ConstLabels: attributes,
+		}, []string{"worker", "direction", "status"},
+	)
+	prometheus.MustRegister(volumeStreamingWorkerBytes, volumeStreamingWorkerTransfers)
+
+	maxStreamingGroups := config.VolumeStreamingMaxGroups
+	if maxStreamingGroups <= 0 {
+		maxStreamingGroups = defaultMaxStreamingGroups
+	}
+
 	workerOrphanedVolumesToBeCollected := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   "concourse",
@@ -902,8 +989,17 @@ func (config *PrometheusConfig) NewEmitter(attributes map[string]string) (metric
 		workerUnknownVolumes:               workerUnknownVolumes,
 		workerOrphanedVolumesToBeCollected: workerOrphanedVolumesToBeCollected,
 
-		volumesStreamed:            volumesStreamed,
-		volumesStreamedViaFallback: volumesStreamedViaFallback,
+		volumesStreamed:                volumesStreamed,
+		volumesStreamedViaFallback:     volumesStreamedViaFallback,
+		volumeStreamingDuration:        volumeStreamingDuration,
+		volumeStreamingTransfers:       volumeStreamingTransfers,
+		volumeStreamingBytes:           volumeStreamingBytes,
+		volumeStreamingUnmeasured:      volumeStreamingUnmeasured,
+		volumeStreamingWorkerBytes:     volumeStreamingWorkerBytes,
+		volumeStreamingWorkerTransfers: volumeStreamingWorkerTransfers,
+		streamingGroups:                map[string]struct{}{metric.UngroupedStreamingGroup: {}},
+		maxStreamingGroups:             maxStreamingGroups,
+		streamingWorkers:               map[string]struct{}{},
 
 		getStepCacheHits:       getStepCacheHits,
 		streamedResourceCaches: streamedResourceCaches,
@@ -1048,6 +1144,15 @@ func (emitter *PrometheusEmitter) Emit(logger lager.Logger, event metric.Event) 
 		emitter.volumesStreamed.Add(event.Value)
 	case "volumes streamed via fallback":
 		emitter.volumesStreamedViaFallback.Add(event.Value)
+	case "volume streaming duration":
+		emitter.volumeStreamingDurationMetric(logger, event)
+	case "volume streaming bytes":
+		emitter.volumeStreamingBytesMetric(logger, event)
+	case "volume streaming unmeasured":
+		emitter.volumeStreamingUnmeasuredMetric(logger, event)
+	case "volume streaming worker":
+		emitter.volumeStreamingWorkerMetric(logger, event)
+
 	case "get step cache hits":
 		emitter.getStepCacheHits.Add(event.Value)
 	case "streamed resource caches":
@@ -1353,7 +1458,40 @@ func (emitter *PrometheusEmitter) periodicMetricGC() {
 			}
 		}
 		emitter.mu.Unlock()
+		emitter.collectDepartedStreamingWorkers()
 		time.Sleep(60 * time.Second)
+	}
+}
+
+// collectDepartedStreamingWorkers drops the per-worker streaming counter series
+// of workers that have left the workers table. Liveness comes from the database
+// rather than heartbeat recency: heartbeats only reach the web node a worker's
+// TSA forwards to, and deleting a live worker's counter would reset it. The
+// lookup runs outside the emitter lock so a slow query cannot stall Emit.
+func (emitter *PrometheusEmitter) collectDepartedStreamingWorkers() {
+	liveness := metric.Metrics.WorkerLiveness()
+	if liveness == nil {
+		return
+	}
+	live, err := liveness()
+	if err != nil {
+		return
+	}
+	emitter.GarbageCollectStreamingWorkers(live)
+}
+
+// GarbageCollectStreamingWorkers deletes the streaming series of every tracked
+// worker that is missing from live, the set of worker names still registered.
+func (emitter *PrometheusEmitter) GarbageCollectStreamingWorkers(live map[string]struct{}) {
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	for worker := range emitter.streamingWorkers {
+		if _, ok := live[worker]; ok {
+			continue
+		}
+		emitter.volumeStreamingWorkerBytes.DeletePartialMatch(prometheus.Labels{"worker": worker})
+		emitter.volumeStreamingWorkerTransfers.DeletePartialMatch(prometheus.Labels{"worker": worker})
+		delete(emitter.streamingWorkers, worker)
 	}
 }
 
@@ -1409,4 +1547,105 @@ func (emitter *PrometheusEmitter) WorkerVolumesLabels() map[string]map[string]pr
 
 func (emitter *PrometheusEmitter) WorkerTasksLabels() map[string]map[string]prometheus.Labels {
 	return emitter.workerTasksLabels
+}
+
+// defaultMaxStreamingGroups bounds distinct group label values when the flag is
+// unset; groups are network zones, so a few dozen is already generous.
+const defaultMaxStreamingGroups = 32
+
+// overflowStreamingGroup labels groups beyond the configured cap.
+const overflowStreamingGroup = "other"
+
+// volumeStreamingRouteLabels validates the route and status of a volume
+// streaming event. Unknown values are dropped rather than minted as series so a
+// caller cannot grow the label space by accident.
+func volumeStreamingRouteLabels(event metric.Event) (route, status string, ok bool) {
+	route = event.Attributes["route"]
+	if !slices.Contains(metric.VolumeStreamingRoutes, route) {
+		return "", "", false
+	}
+	status = event.Attributes["status"]
+	if status != "success" && status != "error" {
+		return "", "", false
+	}
+	return route, status, true
+}
+
+// streamingGroupLabel bounds the distinct group label values. Groups are
+// operator-defined network zones and should be few; if a deployment names a
+// group per worker, values past the cap collapse into "other" so the series
+// count stays bounded by configuration rather than by fleet size.
+func (emitter *PrometheusEmitter) streamingGroupLabel(logger lager.Logger, group string) string {
+	if group == "" {
+		group = metric.UngroupedStreamingGroup
+	}
+	if _, seen := emitter.streamingGroups[group]; seen {
+		return group
+	}
+	if len(emitter.streamingGroups) >= emitter.maxStreamingGroups {
+		if !emitter.streamingGroupsCapped {
+			emitter.streamingGroupsCapped = true
+			logger.Error("volume-streaming-groups-capped", fmt.Errorf("more than %d distinct streaming groups; further groups are labelled %q", emitter.maxStreamingGroups, overflowStreamingGroup))
+		}
+		return overflowStreamingGroup
+	}
+	emitter.streamingGroups[group] = struct{}{}
+	return group
+}
+
+// volumeStreamingDurationMetric observes the duration histogram by route and
+// status and counts the transfer by route, status and group pair, from the one
+// event emitted per operation, so the two agree by construction.
+func (emitter *PrometheusEmitter) volumeStreamingDurationMetric(logger lager.Logger, event metric.Event) {
+	route, status, ok := volumeStreamingRouteLabels(event)
+	if !ok {
+		return
+	}
+	emitter.volumeStreamingDuration.WithLabelValues(route, status).Observe(event.Value)
+
+	srcGroup := emitter.streamingGroupLabel(logger, event.Attributes["src_group"])
+	dstGroup := emitter.streamingGroupLabel(logger, event.Attributes["dst_group"])
+	emitter.volumeStreamingTransfers.WithLabelValues(route, status, srcGroup, dstGroup).Inc()
+}
+
+// volumeStreamingBytesMetric adds a transfer's compressed bytes by route,
+// status and group pair. Negative values would make Counter.Add panic and
+// are dropped.
+func (emitter *PrometheusEmitter) volumeStreamingBytesMetric(logger lager.Logger, event metric.Event) {
+	route, status, ok := volumeStreamingRouteLabels(event)
+	if !ok || event.Value < 0 {
+		return
+	}
+	srcGroup := emitter.streamingGroupLabel(logger, event.Attributes["src_group"])
+	dstGroup := emitter.streamingGroupLabel(logger, event.Attributes["dst_group"])
+	emitter.volumeStreamingBytes.WithLabelValues(route, status, srcGroup, dstGroup).Add(event.Value)
+}
+
+// volumeStreamingUnmeasuredMetric counts a transfer whose byte count was not
+// reported, by route.
+func (emitter *PrometheusEmitter) volumeStreamingUnmeasuredMetric(logger lager.Logger, event metric.Event) {
+	route := event.Attributes["route"]
+	if !slices.Contains(metric.VolumeStreamingRoutes, route) {
+		return
+	}
+	emitter.volumeStreamingUnmeasured.WithLabelValues(route).Inc()
+}
+
+// volumeStreamingWorkerMetric records one side of a transfer for a worker:
+// a transfer by direction and outcome, and the bytes by direction. The worker
+// is remembered so its series can be collected once it leaves the fleet.
+func (emitter *PrometheusEmitter) volumeStreamingWorkerMetric(logger lager.Logger, event metric.Event) {
+	worker := event.Attributes["worker"]
+	direction := event.Attributes["direction"]
+	status := event.Attributes["status"]
+	if worker == "" || (direction != "sent" && direction != "received") || (status != "success" && status != "error") || event.Value < 0 {
+		return
+	}
+
+	emitter.mu.Lock()
+	emitter.streamingWorkers[worker] = struct{}{}
+	emitter.mu.Unlock()
+
+	emitter.volumeStreamingWorkerTransfers.WithLabelValues(worker, direction, status).Inc()
+	emitter.volumeStreamingWorkerBytes.WithLabelValues(worker, direction).Add(event.Value)
 }

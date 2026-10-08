@@ -794,6 +794,19 @@ func (cmd *RunCommand) constructMembers(
 	if err != nil {
 		return nil, err
 	}
+	// Lets the metrics emitter drop per-worker series of workers that left the
+	// fleet; the cache already tracks the workers table on every web node.
+	metric.Metrics.SetWorkerLiveness(func() (map[string]struct{}, error) {
+		workers, err := workerCache.Workers()
+		if err != nil {
+			return nil, err
+		}
+		live := make(map[string]struct{}, len(workers))
+		for _, worker := range workers {
+			live[worker.Name()] = struct{}{}
+		}
+		return live, nil
+	})
 	checkBuildsChan := make(chan db.Build, 2000)
 	apiMembers, err := cmd.constructAPIMembers(logger, reconfigurableSink, apiConn, workerConn, storage, lockFactory, secretManager, policyChecker, workerCache, checkBuildsChan)
 	if err != nil {

@@ -378,7 +378,16 @@ func (c *client) streamOut(ctx context.Context, srcHandle string, encoding bagga
 	return response.Body, nil
 }
 
-func (c *client) streamP2pOut(ctx context.Context, srcHandle string, encoding baggageclaim.Encoding, path string, streamInURL string) error {
+// streamP2pOut asks the source worker to stream srcHandle straight into
+// streamInURL on another worker and reports what the worker said about it.
+//
+// The response body is keepalive whitespace ending in "ok" or an error
+// message. The byte count arrives separately as a trailer, which Go only
+// populates once the body has been read to EOF, so it is read last.
+//
+// Returns the compressed bytes sent, or baggageclaim.UnknownStreamedBytes when
+// the worker did not report a count, plus the streaming error if any.
+func (c *client) streamP2pOut(ctx context.Context, srcHandle string, encoding baggageclaim.Encoding, path string, streamInURL string) (int64, error) {
 	ctx, span := tracing.StartSpan(ctx, "volumeClient.streamP2pOut", tracing.Attrs{
 		"volume":   srcHandle,
 		"encoding": string(encoding),
@@ -388,48 +397,68 @@ func (c *client) streamP2pOut(ctx context.Context, srcHandle string, encoding ba
 	request, err := c.generateRequest(ctx, baggageclaim.StreamP2pOut, rata.Params{
 		"handle": srcHandle,
 	}, nil)
+	if err != nil {
+		return baggageclaim.UnknownStreamedBytes, err
+	}
 
 	request.URL.RawQuery = url.Values{
 		"path":        []string{path},
 		"streamInURL": []string{streamInURL},
 		"encoding":    []string{string(encoding)},
 	}.Encode()
-	if err != nil {
-		return err
-	}
 
 	response, err := c.httpClient(ctx).Do(request)
 	if err != nil {
-		return err
+		return baggageclaim.UnknownStreamedBytes, err
 	}
+	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		return getError(response)
+		return baggageclaim.UnknownStreamedBytes, getError(response)
 	}
 
-	// Write response body for p2p-streaming result
+	// Read the p2p-streaming result from the response body.
 	var result strings.Builder
 	buf := make([]byte, 1024)
 	for {
-		len, err := response.Body.Read(buf)
-		if len > 0 {
-			result.WriteString(strings.TrimSpace(string(buf[:len])))
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			result.WriteString(strings.TrimSpace(string(buf[:n])))
 		}
 
 		if err == io.EOF {
+			bytesSent := streamedBytesFromTrailer(response)
 			if result.String() == "ok" {
-				break
+				return bytesSent, nil
 			}
 
-			return errors.New(result.String())
+			return bytesSent, errors.New(result.String())
 		}
 
 		if err != nil {
-			return err
+			return baggageclaim.UnknownStreamedBytes, err
 		}
 	}
+}
 
-	return nil
+// streamedBytesFromTrailer reads the byte count a source worker reports on its
+// stream-p2p-out response. Trailers exist only after the body reached EOF, so
+// callers drain the body first.
+//
+// Returns baggageclaim.UnknownStreamedBytes when the worker predates the
+// trailer or sent a malformed value.
+func streamedBytesFromTrailer(response *http.Response) int64 {
+	value := response.Trailer.Get(baggageclaim.StreamP2pOutBytesTrailer)
+	if value == "" {
+		return baggageclaim.UnknownStreamedBytes
+	}
+
+	bytesSent, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || bytesSent < 0 {
+		return baggageclaim.UnknownStreamedBytes
+	}
+
+	return bytesSent
 }
 
 func getError(response *http.Response) error {

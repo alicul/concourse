@@ -357,7 +357,10 @@ type P2PVolume interface {
 	// specified by the `Content-Encoding` header (either "gzip", "zstd" or "s2").
 	//
 	// path is a relative path - "." indicates using the root of the Volume.
-	StreamP2POut(ctx context.Context, path string, destURL string, compression compression.Compression) error
+	//
+	// It returns the number of compressed bytes sent to destURL, or a negative
+	// value when the source could not report a count.
+	StreamP2POut(ctx context.Context, path string, destURL string, compression compression.Compression) (int64, error)
 }
 
 // VolumeMount defines a Volume mounted at a particular path in a Container.

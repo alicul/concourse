@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,138 @@ func (event ContainerCollectorDuration) Emit(logger lager.Logger) {
 			Value: ms(event.Duration),
 		},
 	)
+}
+
+// Volume streaming route label values: which path a transfer took and why.
+// They are the only route values the Prometheus emitter accepts.
+const (
+	VolumeStreamingRouteP2P              = "p2p"
+	VolumeStreamingRouteATCDisabled      = "atc_disabled"
+	VolumeStreamingRouteATCUnsupported   = "atc_unsupported"
+	VolumeStreamingRouteATCGroupMismatch = "atc_group_mismatch"
+	VolumeStreamingRouteATCFallback      = "atc_fallback"
+)
+
+// VolumeStreamingRoutes lists every route label value, for validating events
+// and pre-initialising series.
+var VolumeStreamingRoutes = []string{
+	VolumeStreamingRouteP2P,
+	VolumeStreamingRouteATCDisabled,
+	VolumeStreamingRouteATCUnsupported,
+	VolumeStreamingRouteATCGroupMismatch,
+	VolumeStreamingRouteATCFallback,
+}
+
+// Streaming group label sentinels. Label values are never left empty:
+// Prometheus drops empty-valued labels on ingest and push emitters would send
+// bare tags.
+const (
+	// UngroupedStreamingGroup labels a worker with no --p2p-streaming-group.
+	UngroupedStreamingGroup = "ungrouped"
+	// UnknownStreamingGroup labels a source that is not a worker volume, so no
+	// group can be looked up.
+	UnknownStreamingGroup = "unknown"
+)
+
+// VolumeStreaming records one completed volume transfer operation.
+//
+// It is the single place deciding which identifiers may become metric labels
+// or tags, because every emitter except Prometheus copies all attributes
+// verbatim: routes, statuses and groups are bounded, operator-controlled
+// values, and a worker name appears on its own (sent or received side), never
+// as a pair, so series grow with the fleet rather than with its square.
+//
+// Route is a VolumeStreamingRoute* value. Duration covers the whole operation,
+// including a failed P2P attempt before a fallback. Err is the final outcome.
+// Bytes is the compressed byte count moved on Route, negative when unknown.
+// SrcWorker and DstWorker name the workers; SrcWorker is empty when the source
+// is not a worker volume. SrcGroup and DstGroup are the workers' streaming
+// groups, empty when ungrouped.
+type VolumeStreaming struct {
+	Route     string
+	Duration  time.Duration
+	Err       error
+	Bytes     int64
+	SrcWorker string
+	DstWorker string
+	SrcGroup  string
+	DstGroup  string
+}
+
+// Emit sends the events behind the volume streaming metrics: the duration and
+// transfer count by route, status and group pair; the bytes by the same
+// labels, or an unmeasured marker when the count is unknown; and one
+// per-worker event for each side of the transfer.
+func (event VolumeStreaming) Emit(logger lager.Logger) {
+	status := "success"
+	if event.Err != nil {
+		status = "error"
+	}
+
+	routeLabels := map[string]string{
+		"route":     event.Route,
+		"status":    status,
+		"src_group": streamingGroupLabel(event.SrcGroup),
+		"dst_group": streamingGroupLabel(event.DstGroup),
+	}
+
+	Metrics.emit(
+		logger.Session("volume-streaming-duration"),
+		Event{
+			Name:       "volume streaming duration",
+			Value:      event.Duration.Seconds(),
+			Attributes: maps.Clone(routeLabels),
+		},
+	)
+
+	if event.Bytes >= 0 {
+		Metrics.emit(
+			logger.Session("volume-streaming-bytes"),
+			Event{
+				Name:       "volume streaming bytes",
+				Value:      float64(event.Bytes),
+				Attributes: maps.Clone(routeLabels),
+			},
+		)
+	} else {
+		Metrics.emit(
+			logger.Session("volume-streaming-unmeasured"),
+			Event{
+				Name:       "volume streaming unmeasured",
+				Value:      1,
+				Attributes: map[string]string{"route": event.Route},
+			},
+		)
+	}
+
+	for _, side := range []struct{ worker, direction string }{
+		{event.SrcWorker, "sent"},
+		{event.DstWorker, "received"},
+	} {
+		if side.worker == "" {
+			continue
+		}
+		Metrics.emit(
+			logger.Session("volume-streaming-worker"),
+			Event{
+				Name:  "volume streaming worker",
+				Value: float64(max(event.Bytes, 0)),
+				Attributes: map[string]string{
+					"worker":    side.worker,
+					"direction": side.direction,
+					"status":    status,
+				},
+			},
+		)
+	}
+}
+
+// streamingGroupLabel substitutes the ungrouped sentinel for an empty group.
+func streamingGroupLabel(group string) string {
+	if group == "" {
+		return UngroupedStreamingGroup
+	}
+	return group
 }
 
 type VolumeCollectorDuration struct {

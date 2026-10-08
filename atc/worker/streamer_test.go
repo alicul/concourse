@@ -227,6 +227,7 @@ var _ = Describe("Streamer", func() {
 		Expect(baggageclaimVolume(dst.P2PVolume)).To(grt.HaveContent(content))
 		if wantP2P {
 			Expect(src.p2pOutCalls).To(Equal(1))
+			Expect(src.p2pBytes).To(BeNumerically(">", 0), "the source worker reports the bytes it sent")
 			Expect(dst.p2pURLCalls).To(Equal(1))
 			Expect(src.streamOutCalls).To(BeZero())
 			Expect(dst.streamInCalls).To(BeZero())
@@ -315,6 +316,7 @@ func baggageclaimVolume(volume runtime.Volume) *grt.Volume {
 type trackedP2PVolume struct {
 	runtime.P2PVolume
 	p2pOutCalls, p2pURLCalls, streamOutCalls, streamInCalls int
+	p2pBytes                                                int64
 }
 
 func (v *trackedP2PVolume) GetStreamInP2PURL(ctx context.Context, path string) (string, error) {
@@ -322,9 +324,11 @@ func (v *trackedP2PVolume) GetStreamInP2PURL(ctx context.Context, path string) (
 	return v.P2PVolume.GetStreamInP2PURL(ctx, path)
 }
 
-func (v *trackedP2PVolume) StreamP2POut(ctx context.Context, path, url string, c compression.Compression) error {
+func (v *trackedP2PVolume) StreamP2POut(ctx context.Context, path, url string, c compression.Compression) (int64, error) {
 	v.p2pOutCalls++
-	return v.P2PVolume.StreamP2POut(ctx, path, url, c)
+	bytesSent, err := v.P2PVolume.StreamP2POut(ctx, path, url, c)
+	v.p2pBytes = bytesSent
+	return bytesSent, err
 }
 
 func (v *trackedP2PVolume) StreamOut(ctx context.Context, path string, c compression.Compression) (io.ReadCloser, error) {
