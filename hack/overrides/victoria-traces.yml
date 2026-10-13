@@ -1,0 +1,80 @@
+# victoria-traces.yml - a docker-compose override that adds VictoriaTraces
+# (the tracing backend from VictoriaMetrics) and Grafana to the stack, and
+# enables OpenTelemetry tracing on both `web` and `worker`.
+#
+# usage:
+#
+#   docker compose -f docker-compose.yml -f hack/overrides/victoria-traces.yml up -d
+#
+# once running:
+#
+#   * VictoriaTraces UI (vmui):   http://localhost:10428/select/vmui
+#   * Grafana (Jaeger datasource): http://localhost:3000  (anonymous admin)
+#
+# Concourse exports spans via OTLP/gRPC, so VictoriaTraces' gRPC listener
+# (disabled by default) is enabled on :4317. OTLP/HTTP is always available on
+# :10428/insert/opentelemetry/v1/traces.
+#
+# ref: https://docs.victoriametrics.com/victoriatraces/
+# ref: https://docs.docker.com/compose/extends/
+#
+volumes:
+  victoria-traces-data:
+
+configs:
+  grafana-datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: VictoriaTraces
+          uid: victoriatraces
+          type: jaeger
+          access: proxy
+          url: http://victoriatraces:10428/select/jaeger
+          isDefault: true
+          editable: true
+
+services:
+  web:
+    depends_on:
+      victoriatraces:
+        condition: service_started
+    environment:
+      CONCOURSE_TRACING_SERVICE_NAME: concourse-web
+      CONCOURSE_TRACING_OTLP_ADDRESS: victoriatraces:4317
+      CONCOURSE_TRACING_ATTRIBUTE: "deployment.environment:local-dev"
+
+  worker:
+    environment:
+      CONCOURSE_TRACING_SERVICE_NAME: concourse-worker
+      CONCOURSE_TRACING_OTLP_ADDRESS: victoriatraces:4317
+      CONCOURSE_TRACING_ATTRIBUTE: "deployment.environment:local-dev"
+
+  victoriatraces:
+    image: victoriametrics/victoria-traces:${VICTORIA_TRACES_TAG:-latest}
+    restart: on-failure
+    command:
+      - -storageDataPath=/victoria-traces-data
+      - -retentionPeriod=7d
+      - -httpListenAddr=:10428
+      # Concourse only speaks OTLP over gRPC; plaintext is fine for local dev
+      - -otlpGRPCListenAddr=:4317
+      - -otlpGRPC.tls=false
+    volumes:
+      - victoria-traces-data:/victoria-traces-data
+    ports:
+      - "10428:10428" # vmui, Jaeger query API, OTLP/HTTP ingestion
+      - "4317:4317"   # OTLP/gRPC ingestion
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_TAG:-latest}
+    depends_on: [victoriatraces]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    configs:
+      - source: grafana-datasources
+        target: /etc/grafana/provisioning/datasources/victoriatraces.yml
+    ports:
+      - "3000:3000"
