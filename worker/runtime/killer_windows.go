@@ -15,9 +15,17 @@ import (
 // taskExecedProcesses retrieves a task's processes. On Windows the runhcs
 // shim reports process details for every process, with ExecID left empty for
 // the init process.
+//
+// The shim lists them by asking the container's compute system, which fails
+// once that has shut down, as it has for a container that failed to start. A
+// task that doesn't run has no process to signal, so that is no error.
 func taskExecedProcesses(ctx context.Context, task containerd.Task) ([]containerd.Process, error) {
 	pids, err := task.Pids(context.Background())
 	if err != nil {
+		if !taskRuns(ctx, task) {
+			return nil, nil
+		}
+
 		return nil, fmt.Errorf("pid listing: %w", err)
 	}
 
@@ -53,4 +61,17 @@ func taskExecedProcesses(ctx context.Context, task containerd.Task) ([]container
 	}
 
 	return procs, nil
+}
+
+// taskRuns tells whether a task can have processes. It cannot before its
+// init process is started, which the shim requires before it executes any
+// other, nor after the init process has exited, which ends all others. A task
+// whose status cannot be read counts as running.
+func taskRuns(ctx context.Context, task containerd.Task) bool {
+	status, err := task.Status(ctx)
+	if err != nil {
+		return true
+	}
+
+	return status.Status != containerd.Created && status.Status != containerd.Stopped
 }
