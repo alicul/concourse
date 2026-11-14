@@ -413,9 +413,6 @@ func (b *GardenBackend) Destroy(handle string) error {
 
 	ctx := context.Background()
 
-	// Releases tracked cio.IO's for the container
-	b.ioManager.Delete(handle)
-
 	container, err := b.client.GetContainer(ctx, handle)
 	if err != nil {
 		return fmt.Errorf("get container: %w", err)
@@ -426,6 +423,9 @@ func (b *GardenBackend) Destroy(handle string) error {
 		if !errdefs.IsNotFound(err) {
 			return fmt.Errorf("task lookup: %w", err)
 		}
+
+		// no task, so no process that could still use its IO: see below
+		b.ioManager.Delete(handle)
 
 		err = container.Delete(ctx)
 		if err != nil {
@@ -456,6 +456,11 @@ func (b *GardenBackend) Destroy(handle string) error {
 	if err != nil {
 		return fmt.Errorf("task remove: %w", err)
 	}
+
+	// Releases tracked cio.IO's for the container. Not before its task is
+	// gone: on Windows this closes the stdio pipes, and the shim doesn't
+	// report the exit of a process whose output it cannot deliver.
+	b.ioManager.Delete(handle)
 
 	err = container.Delete(ctx)
 	if err != nil {

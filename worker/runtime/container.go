@@ -180,7 +180,7 @@ func (c *Container) Attach(pid string, processIO garden.ProcessIO) (process gard
 	var lastErr error
 
 	for attempt := range maxRetries {
-		ioAttach := c.ioManager.Attach(c.Handle(), pid, cio.NewAttach(cioOpts...))
+		ioAttach := c.ioManager.Attach(c.Handle(), pid, processIOAttach(cioOpts))
 		proc, lastErr = task.LoadProcess(ctx, pid, ioAttach)
 
 		if lastErr == nil {

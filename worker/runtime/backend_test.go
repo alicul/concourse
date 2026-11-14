@@ -537,6 +537,11 @@ func (s *BackendSuite) TestDestroyCallsIOManager() {
 	s.client.GetContainerReturns(fakeContainer, nil)
 	fakeContainer.TaskReturns(fakeTask, nil)
 
+	// a process that still runs still uses its IO
+	s.ioManager.DeleteStub = func(string) {
+		s.Equal(1, fakeTask.DeleteCallCount(), "IOManager.Delete() should come after the task is deleted")
+	}
+
 	id := "some-handle"
 	err := s.backend.Destroy(id)
 	s.NoError(err)
@@ -544,6 +549,30 @@ func (s *BackendSuite) TestDestroyCallsIOManager() {
 	s.Equal(1, s.ioManager.DeleteCallCount())
 	actualID := s.ioManager.DeleteArgsForCall(0)
 	s.Equal(id, actualID, "IOManager.Delete() should be given the container ID/Handle")
+}
+
+func (s *BackendSuite) TestDestroyCallsIOManagerWithoutATask() {
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+	s.client.GetContainerReturns(fakeContainer, nil)
+	fakeContainer.TaskReturns(nil, errdefs.ErrNotFound)
+
+	err := s.backend.Destroy("some-handle")
+	s.NoError(err)
+
+	s.Equal(1, s.ioManager.DeleteCallCount())
+}
+
+func (s *BackendSuite) TestDestroyKeepsIOOfATaskItCouldNotKill() {
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+	s.client.GetContainerReturns(fakeContainer, nil)
+	fakeContainer.TaskReturns(new(libcontainerdfakes.FakeTask), nil)
+
+	s.killer.KillReturns(errors.New("kill-task-failed"))
+
+	err := s.backend.Destroy("some-handle")
+	s.Error(err)
+
+	s.Equal(0, s.ioManager.DeleteCallCount())
 }
 
 func (s *BackendSuite) TestDestroyCallResumeContainerTraffic() {

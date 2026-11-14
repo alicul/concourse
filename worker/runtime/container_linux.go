@@ -28,6 +28,32 @@ func processIOCreator(_ string, opts []cio.Opt) cio.Creator {
 	return cio.NewCreator(opts...)
 }
 
+func processIOAttach(opts []cio.Opt) cio.Attach {
+	return cio.NewAttach(opts...)
+}
+
+// replaceIO attaches a process's new IO before it stops the previous one
+// from reading the FIFO files. Closing the previous one first, or at all,
+// can make containerd delete the FIFO files and the attach fail. It returns
+// the IO that reads the process's stdio from now on, which is still the
+// previous one when attaching fails.
+func replaceIO(previous cio.IO, attach func() (cio.IO, error)) (cio.IO, error) {
+	newIO, err := attach()
+	if err != nil {
+		return previous, err
+	}
+
+	if previous != nil {
+		previous.Cancel()
+	}
+
+	return newIO, nil
+}
+
+// forgetIO leaves the IO of a container that is being destroyed alone: its
+// copies end when the container's processes close their FIFO files.
+func forgetIO(cio.IO) {}
+
 var pathRegexp = regexp.MustCompile("^PATH=.*$")
 
 // closeStdinAfterStart marks stdin closable for processes without a TTY, so

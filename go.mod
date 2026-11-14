@@ -17,6 +17,7 @@ require (
 	github.com/DataDog/datadog-go/v5 v5.9.0
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.34.0
 	github.com/Masterminds/squirrel v1.5.4
+	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29
 	github.com/Microsoft/hcsshim v0.15.0-rc.1
 	github.com/aryann/difflib v0.0.0-20210328193216-ff5ff6dc229b
 	github.com/aws/aws-sdk-go-v2 v1.43.0
@@ -129,7 +130,6 @@ require (
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
-	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
