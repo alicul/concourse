@@ -39,19 +39,24 @@ func NewIOManager() IOManager {
 
 func (i *ioManager) Creator(containerID, taskID string, creator cio.Creator) cio.Creator {
 	return func(id string) (cio.IO, error) {
+		// containerd returns a nil pointer of its own type along with an
+		// error, which is not a nil cio.IO: only the error tells
 		newCIO, err := creator(id)
-		if newCIO != nil {
-			i.lock.Lock()
-			defer i.lock.Unlock()
-			if _, containerIsTracked := i.ioReaders[containerID]; containerIsTracked {
-				i.ioReaders[containerID][taskID] = newCIO
-			} else {
-				i.ioReaders[containerID] = map[string]cio.IO{
-					taskID: newCIO,
-				}
+		if err != nil {
+			return nil, err
+		}
+
+		i.lock.Lock()
+		defer i.lock.Unlock()
+		if _, containerIsTracked := i.ioReaders[containerID]; containerIsTracked {
+			i.ioReaders[containerID][taskID] = newCIO
+		} else {
+			i.ioReaders[containerID] = map[string]cio.IO{
+				taskID: newCIO,
 			}
 		}
-		return newCIO, err
+
+		return newCIO, nil
 	}
 }
 
@@ -66,25 +71,28 @@ func (i *ioManager) Attach(containerID, taskID string, attach cio.Attach) cio.At
 		defer i.lock.Unlock()
 		prevIO, exists := i.ioReaders[containerID][taskID]
 
+		// as in Creator, only the error tells whether there is a new IO
 		newCIO, err := attach(f)
-		if newCIO != nil {
-			if _, containerIsTracked := i.ioReaders[containerID]; containerIsTracked {
-				i.ioReaders[containerID][taskID] = newCIO
-			} else {
-				i.ioReaders[containerID] = map[string]cio.IO{
-					taskID: newCIO,
-				}
-			}
+		if err != nil {
+			return nil, err
+		}
 
-			if exists && prevIO != nil {
-				// Calling Cancel() stops the old cio's from reading the FIFO files
-				prevIO.Cancel()
-				// Don't call prevIO.Close() because that can result in containerd
-				// deleting the FIFO files and re-attachment to fail.
+		if _, containerIsTracked := i.ioReaders[containerID]; containerIsTracked {
+			i.ioReaders[containerID][taskID] = newCIO
+		} else {
+			i.ioReaders[containerID] = map[string]cio.IO{
+				taskID: newCIO,
 			}
 		}
 
-		return newCIO, err
+		if exists && prevIO != nil {
+			// Calling Cancel() stops the old cio's from reading the FIFO files
+			prevIO.Cancel()
+			// Don't call prevIO.Close() because that can result in containerd
+			// deleting the FIFO files and re-attachment to fail.
+		}
+
+		return newCIO, nil
 	}
 }
 

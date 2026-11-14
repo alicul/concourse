@@ -103,6 +103,59 @@ func (s *IOManagerSuite) TestAttachErrors() {
 	s.Equal(firstIO, actualIO, "should return the first CIO still")
 }
 
+// containerd's creators and attachers return a nil pointer of their own type
+// with an error. Stored as a cio.IO it is not nil, and calling it panics.
+func (s *IOManagerSuite) TestCreatorErrorsWithANilIOOfSomeType() {
+	containerId := "cid"
+	taskID := "tid"
+	ioCreater := s.ioManager.Creator(containerId, taskID, func(id string) (cio.IO, error) {
+		var failed *runtimefakes.FakeIO
+		return failed, errors.New("some error from containerd's Creator func")
+	})
+	newIO, err := ioCreater("some-other-id")
+	s.Error(err)
+	s.Nil(newIO)
+
+	_, exists := s.ioManager.Get(containerId, taskID)
+	s.False(exists, "an IO that failed to be created should not be tracked")
+}
+
+func (s *IOManagerSuite) TestAttachErrorsWithANilIOOfSomeType() {
+	containerId := "cid"
+	taskID := "tid"
+	firstIO := &runtimefakes.FakeIO{}
+	ioCreater := s.ioManager.Creator(containerId, taskID, func(id string) (cio.IO, error) {
+		return firstIO, nil
+	})
+	_, err := ioCreater("some-other-id")
+	s.NoError(err)
+
+	ioAttach := s.ioManager.Attach(containerId, taskID, func(_ *cio.FIFOSet) (cio.IO, error) {
+		var failed *runtimefakes.FakeIO
+		return failed, errors.New("some error from containerd's Attach func")
+	})
+	newIO, err := ioAttach(nil)
+	s.Error(err)
+	s.Nil(newIO)
+
+	s.Equal(0, firstIO.CancelCallCount(), "Cancel() should not be called if the inner attach() func error'd")
+
+	actualIO, exists := s.ioManager.Get(containerId, taskID)
+	s.True(exists)
+	s.Equal(firstIO, actualIO, "should return the first CIO still")
+
+	// the next attach finds the first IO to cancel, not the one that failed
+	secondIO := &runtimefakes.FakeIO{}
+	ioAttach = s.ioManager.Attach(containerId, taskID, func(_ *cio.FIFOSet) (cio.IO, error) {
+		return secondIO, nil
+	})
+	s.NotPanics(func() {
+		_, err = ioAttach(nil)
+	})
+	s.NoError(err)
+	s.Equal(1, firstIO.CancelCallCount())
+}
+
 func (s *IOManagerSuite) TestDeletingReader() {
 	containerId := "cid"
 	taskID := "tid"
