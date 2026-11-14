@@ -396,7 +396,7 @@ func procID(gdnProcSpec garden.ProcessSpec) string {
 func (c *Container) setupContainerdProcSpec(gdnProcSpec garden.ProcessSpec, containerSpec specs.Spec) (specs.Process, error) {
 	procSpec := containerSpec.Process
 
-	procSpec.Args = append([]string{gdnProcSpec.Path}, gdnProcSpec.Args...)
+	procSpec.Args = append([]string{processPath(gdnProcSpec.Path)}, gdnProcSpec.Args...)
 	procSpec.Env = append(procSpec.Env, gdnProcSpec.Env...)
 
 	cwd := processCwd(gdnProcSpec.Dir)

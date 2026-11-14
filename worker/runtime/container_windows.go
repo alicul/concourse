@@ -4,6 +4,8 @@ package runtime
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
 	"code.cloudfoundry.org/garden"
 	bespec "github.com/concourse/concourse/v8/worker/runtime/spec"
@@ -24,6 +26,21 @@ func processCwd(dir string) string {
 		return `C:\`
 	}
 	return bespec.WindowsContainerPath(dir)
+}
+
+// processPath gives the path of a process's executable the separators of
+// Windows. A pipeline names a script in one of its inputs as it does for
+// Linux, with forward slashes (repo/ci/build.cmd). Windows runs a batch file
+// through cmd.exe, which takes what follows the first slash for a switch:
+// "'repo' is not recognized as an internal or external command".
+//
+// A path that starts with a slash is left as it is, like the web node's own
+// /opt/resource/in, which Windows resolves.
+func processPath(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	return filepath.FromSlash(path)
 }
 
 // envWithDefaultPath never injects a PATH on Windows; the image's own

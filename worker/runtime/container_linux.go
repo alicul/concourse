@@ -24,6 +24,11 @@ func processCwd(dir string) string {
 	return dir
 }
 
+// processPath is the path of a process's executable as it was asked for.
+func processPath(path string) string {
+	return path
+}
+
 func processIOCreator(_ string, opts []cio.Opt) cio.Creator {
 	return cio.NewCreator(opts...)
 }
