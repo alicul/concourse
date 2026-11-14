@@ -86,6 +86,37 @@ func (s *ProcessSuite) TestProcessWaitProcessAlreadyDeleted() {
 	s.Equal(1, s.containerdContainer.SetLabelsCallCount())
 }
 
+// After an attach, two garden.Process wait for one containerd process. The
+// one that comes second finds that the first has deleted it.
+func (s *ProcessSuite) TestProcessWaitProcessAlreadyDeletedByAnotherWait() {
+	s.ch <- *containerd.NewExitStatus(42, time.Now(), nil)
+	s.containerdProcess.IOReturns(s.io)
+
+	s.containerdProcess.CloseIOReturns(fmt.Errorf("wrapped: %w", errdefs.ErrNotFound))
+	s.containerdProcess.DeleteReturns(nil, fmt.Errorf("wrapped: %w", errdefs.ErrNotFound))
+
+	status, err := s.process.Wait()
+	s.NoError(err)
+	s.Equal(42, status)
+
+	s.Equal(1, s.io.CancelCallCount())
+	s.Equal(1, s.io.WaitCallCount())
+	s.Equal(1, s.io.CloseCallCount())
+}
+
+func (s *ProcessSuite) TestProcessWaitCloseIOError() {
+	s.ch <- *containerd.NewExitStatus(0, time.Now(), nil)
+	s.containerdProcess.IOReturns(s.io)
+
+	expectedErr := errors.New("closeio-err")
+	s.containerdProcess.CloseIOReturns(expectedErr)
+
+	_, err := s.process.Wait()
+	s.True(errors.Is(err, expectedErr))
+
+	s.Equal(1, s.io.CloseCallCount(), "the IO should be closed all the same")
+}
+
 func (s *ProcessSuite) TestProcessWaitBlocksUntilIOFinishes() {
 	s.ch <- *containerd.NewExitStatus(0, time.Now(), nil)
 	s.containerdProcess.IOReturns(s.io)

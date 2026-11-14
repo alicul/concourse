@@ -46,14 +46,21 @@ func (p *Process) Wait() (int, error) {
 		return 0, fmt.Errorf("waiting for exit status: %w", err)
 	}
 
-	err = p.process.CloseIO(context.Background(), containerd.WithStdinCloser)
-	if err != nil {
-		return 0, fmt.Errorf("proc closeio: %w", err)
+	// After an attach, the garden.Process from before it waits for the same
+	// containerd process as this one. Whichever is first deletes the
+	// process, and the other one then finds it gone.
+	closeErr := p.process.CloseIO(context.Background(), containerd.WithStdinCloser)
+	if errors.Is(closeErr, errdefs.ErrNotFound) {
+		closeErr = nil
 	}
 
 	p.process.IO().Cancel()
 	p.process.IO().Wait()
 	p.process.IO().Close()
+
+	if closeErr != nil {
+		return 0, fmt.Errorf("proc closeio: %w", closeErr)
+	}
 
 	_, err = p.process.Delete(context.Background())
 	// ignore "not found" errors - the process was already deleted
