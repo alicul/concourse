@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"code.cloudfoundry.org/garden"
 	"github.com/concourse/concourse/v8/worker/runtime"
 	"github.com/concourse/concourse/v8/worker/runtime/libcontainerd/libcontainerdfakes"
 	"github.com/concourse/concourse/v8/worker/runtime/runtimefakes"
@@ -52,8 +53,31 @@ func destroyableContainer(t *testing.T) (runtime.GardenBackend, *attachingNetwor
 	container := new(libcontainerdfakes.FakeContainer)
 	container.SpecReturns(oci, nil)
 	client.GetContainerReturns(container, nil)
+	client.NewContainerFromImageLayoutReturns(container, nil)
 
 	return backend, network, container, oci
+}
+
+func TestCreateRemovesAContainerWhoseTaskDidNotStart(t *testing.T) {
+	backend, network, container, oci := destroyableContainer(t)
+
+	task := new(libcontainerdfakes.FakeTask)
+	container.NewTaskReturns(task, nil)
+	container.TaskReturns(task, nil)
+
+	// what a container gets from an image that the host cannot run under
+	// process isolation
+	failed := errors.New("hcs::System::Start: The virtual machine or container exited unexpectedly.")
+	task.StartReturns(failed)
+
+	_, err := backend.Create(garden.ContainerSpec{Handle: "some-handle", RootFSPath: `raw://C:\rootfs`})
+	require.ErrorIs(t, err, failed)
+
+	// nothing of it stays: not the container, which the web node would find
+	// and run its step in, and not its network namespace
+	require.Equal(t, 1, task.DeleteCallCount())
+	require.Equal(t, []*specs.Spec{oci}, network.detached)
+	require.Equal(t, 1, container.DeleteCallCount())
 }
 
 func TestDestroyDetachesAContainerOnceItsTaskIsDeleted(t *testing.T) {

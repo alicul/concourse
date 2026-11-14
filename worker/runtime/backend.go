@@ -327,7 +327,20 @@ func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, 
 
 	err = b.startTask(ctx, cont, hermetic)
 	if err != nil {
-		return nil, fmt.Errorf("starting task: %w", err)
+		err = fmt.Errorf("starting task: %w", err)
+
+		// A container whose task did not start must not stay. After a failed
+		// create the web node looks the handle up and takes a container it
+		// finds for the one it asked for: it would run its step in this one,
+		// whose task never started (on Linux without the network that
+		// startTask sets up, a hermetic step without its DROP rules), and
+		// this error would never reach the build.
+		destroyErr := b.destroyContainer(ctx, gdnSpec.Handle, cont)
+		if destroyErr != nil {
+			err = errors.Join(err, fmt.Errorf("removing the container: %w", destroyErr))
+		}
+
+		return nil, err
 	}
 
 	return NewContainer(
@@ -418,6 +431,13 @@ func (b *GardenBackend) Destroy(handle string) error {
 		return fmt.Errorf("get container: %w", err)
 	}
 
+	return b.destroyContainer(ctx, handle, container)
+}
+
+// destroyContainer stops what runs in a container, then deletes its task, its
+// network and the container itself. It is what Destroy does once it has the
+// container, and what Create does with a container whose task did not start.
+func (b *GardenBackend) destroyContainer(ctx context.Context, handle string, container containerd.Container) error {
 	task, err := container.Task(ctx, cio.Load)
 	if err != nil {
 		if !errdefs.IsNotFound(err) {

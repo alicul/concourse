@@ -155,6 +155,7 @@ func (s *BackendSuite) TestCreateContainerNewTaskFailure() {
 
 	expectedErr := errors.New("task-err")
 	fakeContainer.NewTaskReturns(nil, expectedErr)
+	fakeContainer.TaskReturns(nil, errdefs.ErrNotFound)
 
 	s.client.NewContainerReturns(fakeContainer, nil)
 
@@ -162,6 +163,11 @@ func (s *BackendSuite) TestCreateContainerNewTaskFailure() {
 	s.EqualError(errors.Unwrap(errors.Unwrap(err)), expectedErr.Error())
 
 	s.Equal(1, fakeContainer.NewTaskCallCount())
+
+	// a run in it would give it a new task, without the network that Create
+	// sets up, and the web node would find it when it looks the handle up
+	// after the failed create
+	s.Equal(1, fakeContainer.DeleteCallCount())
 }
 
 func (s *BackendSuite) TestCreateContainerTaskStartFailure() {
@@ -170,12 +176,64 @@ func (s *BackendSuite) TestCreateContainerTaskStartFailure() {
 
 	s.client.NewContainerReturns(fakeContainer, nil)
 	fakeContainer.NewTaskReturns(fakeTask, nil)
+	fakeContainer.TaskReturns(fakeTask, nil)
 	fakeTask.StartReturns(errors.New("start-err"))
 
 	_, err := s.backend.Create(minimumValidGdnSpec)
 	s.Error(err)
 
 	s.EqualError(errors.Unwrap(err), "start-err")
+}
+
+func (s *BackendSuite) TestCreateRemovesAContainerWhoseTaskDidNotStart() {
+	fakeTask := new(libcontainerdfakes.FakeTask)
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+
+	s.client.NewContainerReturns(fakeContainer, nil)
+	fakeContainer.NewTaskReturns(fakeTask, nil)
+	fakeContainer.TaskReturns(fakeTask, nil)
+	fakeTask.StartReturns(errors.New("start-err"))
+
+	// the network is found through the task's process, and containerd does
+	// not delete a container that still has a task
+	fakeTask.DeleteStub = func(context.Context, ...containerd.ProcessDeleteOpts) (*containerd.ExitStatus, error) {
+		s.Equal(1, s.network.RemoveCallCount(), "the network should be removed while the task exists")
+		return nil, nil
+	}
+	fakeContainer.DeleteStub = func(context.Context, ...containerd.DeleteOpts) error {
+		s.Equal(1, fakeTask.DeleteCallCount(), "the task should be deleted before its container")
+		return nil
+	}
+
+	_, err := s.backend.Create(minimumValidGdnSpec)
+	s.EqualError(errors.Unwrap(err), "start-err")
+
+	s.Equal(1, fakeContainer.DeleteCallCount())
+
+	_, _, handle := s.network.RemoveArgsForCall(0)
+	s.Equal(minimumValidGdnSpec.Handle, handle)
+	s.Equal(minimumValidGdnSpec.Handle, s.ioManager.DeleteArgsForCall(0))
+}
+
+func (s *BackendSuite) TestCreateReportsAContainerItCouldNotRemove() {
+	fakeTask := new(libcontainerdfakes.FakeTask)
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+
+	s.client.NewContainerReturns(fakeContainer, nil)
+	fakeContainer.NewTaskReturns(fakeTask, nil)
+	fakeContainer.TaskReturns(fakeTask, nil)
+
+	startErr := errors.New("start-err")
+	deleteErr := errors.New("delete-err")
+	fakeTask.StartReturns(startErr)
+	fakeContainer.DeleteReturns(deleteErr)
+
+	_, err := s.backend.Create(minimumValidGdnSpec)
+
+	// why the task did not start stays the first thing the error says
+	s.ErrorIs(err, startErr)
+	s.ErrorIs(err, deleteErr)
+	s.Regexp("^starting task: start-err\n", err.Error())
 }
 
 func (s *BackendSuite) TestCreateContainerSetsHandle() {
