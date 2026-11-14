@@ -11,6 +11,8 @@ import (
 	"code.cloudfoundry.org/lager/v3"
 	"github.com/concourse/concourse/v8/atc"
 	"github.com/concourse/concourse/v8/flag"
+	"github.com/concourse/concourse/v8/worker"
+	"github.com/concourse/concourse/v8/worker/runtime/libcontainerd"
 	"github.com/jessevdk/go-flags"
 	"github.com/tedsuo/ifrit"
 )
@@ -30,6 +32,7 @@ type ContainerdRuntime struct {
 	LogLevel       string        `long:"log-level" default:"info" choice:"trace" choice:"debug" choice:"info" choice:"warn" choice:"error" choice:"fatal" choice:"panic" description:"Minimum level of logs to see."`
 	RequestTimeout time.Duration `long:"request-timeout" default:"5m" description:"How long to wait for requests to Containerd to complete. 0 means no timeout."`
 	MaxContainers  int           `long:"max-containers" default:"250" description:"Max container capacity. 0 means no limit."`
+	ImageRetention time.Duration `long:"image-retention" default:"24h" description:"How long to keep an image unpacked after the last volume holding it is gone from the worker, so that builds whose image is streamed from another worker don't unpack it each time. 0 lets go of an image together with its last volume."`
 	Isolation      string        `long:"isolation" default:"process" choice:"process" choice:"hyperv" description:"How to isolate containers. 'process' shares the host's kernel, so images must be compatible with the host's Windows version. 'hyperv' boots each container in its own utility VM, which can also run images for older Windows versions, and needs the Hyper-V role on the host."`
 	HyperVCPUs     uint          `long:"hyperv-cpus" description:"Virtual processors in the utility VM of each container with Hyper-V isolation. 0 means the runtime default of 2."`
 	HyperVMemoryMB uint          `long:"hyperv-memory-mb" description:"Memory in megabytes of the utility VM of each container with Hyper-V isolation and no memory limit. A container's memory limit sizes its utility VM instead. 0 means the runtime default of 1024."`
@@ -96,4 +99,24 @@ func (cmd *WorkerCommand) baggageclaimRunner(logger lager.Logger) (ifrit.Runner,
 	cmd.Baggageclaim.OverlaysDir = filepath.Join(cmd.WorkDir.Path(), "overlays")
 
 	return cmd.Baggageclaim.Runner(logger, nil)
+}
+
+// volumeSweeperOpts makes the volume sweeper also sweep the images that the
+// containerd runtime keeps unpacked. Their lifetime follows the volumes that
+// hold them, and the sweeper is what destroys volumes.
+func (cmd *WorkerCommand) volumeSweeperOpts() []worker.VolumeSweeperOpt {
+	if cmd.Runtime != containerdRuntime || cmd.gardenServerIsExternal() {
+		return nil
+	}
+
+	client := libcontainerd.New(
+		containerdAddr,
+		containerdNamespace,
+		cmd.Containerd.RequestTimeout,
+		libcontainerd.WithImageRetention(cmd.Containerd.ImageRetention),
+	)
+
+	return []worker.VolumeSweeperOpt{
+		worker.WithImageSweeper(client.SweepImages),
+	}
 }

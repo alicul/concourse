@@ -83,7 +83,12 @@ func (cmd *WorkerCommand) containerdGardenServerRunner(logger lager.Logger, cont
 	}
 
 	gardenBackend, err := runtime.NewGardenBackend(
-		libcontainerd.New(containerdAddr, containerdNamespace, cmd.Containerd.RequestTimeout),
+		libcontainerd.New(
+			containerdAddr,
+			containerdNamespace,
+			cmd.Containerd.RequestTimeout,
+			libcontainerd.WithImageRetention(cmd.Containerd.ImageRetention),
+		),
 		backendOpts...,
 	)
 	if err != nil {

@@ -11,14 +11,31 @@ import (
 	"github.com/concourse/concourse/v8/worker/baggageclaim"
 )
 
+// ImageSweeper lets go of the images that a runtime keeps unpacked and that
+// no volume on the worker holds any more.
+type ImageSweeper func(ctx context.Context) error
+
+// VolumeSweeperOpt configures a volume sweeper.
+type VolumeSweeperOpt func(*volumeSweeper)
+
+// WithImageSweeper makes the volume sweeper sweep the runtime's images each
+// time it has swept the volumes.
+func WithImageSweeper(sweepImages ImageSweeper) VolumeSweeperOpt {
+	return func(s *volumeSweeper) {
+		s.sweepImages = sweepImages
+	}
+}
+
 // volumeSweeper is an ifrit.Runner that periodically reports and
-// garbage-collects a worker's volumes
+// garbage-collects a worker's volumes and, given WithImageSweeper, then lets
+// go of the runtime's images that no volume holds any more.
 type volumeSweeper struct {
 	logger             lager.Logger
 	interval           time.Duration
 	tsaClient          TSAClient
 	baggageclaimClient baggageclaim.Client
 	maxInFlight        uint16
+	sweepImages        ImageSweeper
 }
 
 func NewVolumeSweeper(
@@ -27,14 +44,19 @@ func NewVolumeSweeper(
 	tsaClient TSAClient,
 	bcClient baggageclaim.Client,
 	maxInFlight uint16,
+	opts ...VolumeSweeperOpt,
 ) *volumeSweeper {
-	return &volumeSweeper{
+	sweeper := &volumeSweeper{
 		logger:             logger,
 		interval:           sweepInterval,
 		tsaClient:          tsaClient,
 		baggageclaimClient: bcClient,
 		maxInFlight:        maxInFlight,
 	}
+	for _, opt := range opts {
+		opt(sweeper)
+	}
+	return sweeper
 }
 
 func (sweeper *volumeSweeper) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
@@ -99,5 +121,14 @@ func (sweeper *volumeSweeper) sweep(logger lager.Logger) {
 	err = sweeper.baggageclaimClient.CleanupOrphanedVolumes(ctx)
 	if err != nil {
 		logger.Error("failed-to-cleanup-orphaned-volumes", err)
+	}
+
+	if sweeper.sweepImages != nil {
+		// after the volumes, so that an image is let go of in the same sweep
+		// as the last volume that held it
+		err := sweeper.sweepImages(ctx)
+		if err != nil {
+			logger.Error("failed-to-sweep-images", err)
+		}
 	}
 }

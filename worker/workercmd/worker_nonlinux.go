@@ -11,6 +11,7 @@ import (
 	"code.cloudfoundry.org/lager/v3"
 	"github.com/concourse/concourse/v8/atc"
 	"github.com/concourse/concourse/v8/flag"
+	"github.com/concourse/concourse/v8/worker"
 	"github.com/jessevdk/go-flags"
 	"github.com/tedsuo/ifrit"
 )
@@ -62,4 +63,10 @@ func (cmd *WorkerCommand) baggageclaimRunner(logger lager.Logger) (ifrit.Runner,
 	cmd.Baggageclaim.OverlaysDir = filepath.Join(cmd.WorkDir.Path(), "overlays")
 
 	return cmd.Baggageclaim.Runner(logger, nil)
+}
+
+// volumeSweeperOpts is empty: the runtimes of this platform keep nothing of
+// their own that follows the worker's volumes.
+func (cmd *WorkerCommand) volumeSweeperOpts() []worker.VolumeSweeperOpt {
+	return nil
 }

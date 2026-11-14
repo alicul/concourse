@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"time"
@@ -26,6 +27,7 @@ var _ = Describe("Volume Sweeper", func() {
 
 		fakeTSAClient *workerfakes.FakeTSAClient
 		fakeBcClient  *baggageclaimfakes.FakeClient
+		sweeperOpts   []worker.VolumeSweeperOpt
 
 		osSignal chan os.Signal
 		exited   chan struct{}
@@ -35,6 +37,7 @@ var _ = Describe("Volume Sweeper", func() {
 		testLogger = lagertest.NewTestLogger("volume-sweeper")
 		osSignal = make(chan os.Signal)
 		exited = make(chan struct{})
+		sweeperOpts = nil
 
 		fakeTSAClient = new(workerfakes.FakeTSAClient)
 		fakeTSAClient.ReportVolumesReturns(nil)
@@ -45,7 +48,7 @@ var _ = Describe("Volume Sweeper", func() {
 	})
 
 	JustBeforeEach(func() {
-		sweeper := worker.NewVolumeSweeper(testLogger, sweepInterval, fakeTSAClient, fakeBcClient, maxInFlight)
+		sweeper := worker.NewVolumeSweeper(testLogger, sweepInterval, fakeTSAClient, fakeBcClient, maxInFlight, sweeperOpts...)
 		go func() {
 			_ = sweeper.Run(osSignal, make(chan struct{}))
 			close(exited)
@@ -73,6 +76,46 @@ var _ = Describe("Volume Sweeper", func() {
 			Expect(len(logs)).To(BeNumerically(">=", 2))
 			Expect(logs[0].LogLevel).To(Equal(lager.ERROR))
 			Expect(logs[0].Data["error"]).To(Equal("cleanup-failed"))
+		})
+	})
+
+	Context("when the runtime has images to sweep", func() {
+		var volumesDestroyed chan int
+
+		BeforeEach(func() {
+			volumesDestroyed = make(chan int, 1)
+
+			fakeTSAClient.VolumesToDestroyReturns([]string{"destroyed"}, nil)
+
+			sweeperOpts = []worker.VolumeSweeperOpt{
+				worker.WithImageSweeper(func(context.Context) error {
+					// never blocks the sweeper: only the first sweep is recorded
+					select {
+					case volumesDestroyed <- fakeBcClient.DestroyVolumeCallCount():
+					default:
+					}
+
+					return errors.New("sweep-failed")
+				}),
+			}
+		})
+
+		It("sweeps them once the volumes are destroyed", func() {
+			var destroyed int
+			Eventually(volumesDestroyed).Should(Receive(&destroyed))
+			Expect(destroyed).To(Equal(1))
+		})
+
+		It("logs when sweeping them fails", func() {
+			Eventually(func() []string {
+				var failures []string
+				for _, log := range testLogger.Logs() {
+					if log.Message == "volume-sweeper.tick.failed-to-sweep-images" {
+						failures = append(failures, log.Data["error"].(string))
+					}
+				}
+				return failures
+			}).Should(ContainElement("sweep-failed"))
 		})
 	})
 })

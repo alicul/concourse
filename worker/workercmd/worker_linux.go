@@ -13,6 +13,7 @@ import (
 	"github.com/concourse/concourse/v8/atc"
 	concourseCmd "github.com/concourse/concourse/v8/cmd"
 	"github.com/concourse/concourse/v8/flag"
+	"github.com/concourse/concourse/v8/worker"
 	"github.com/concourse/concourse/v8/worker/network"
 	bespec "github.com/concourse/concourse/v8/worker/runtime/spec"
 	"github.com/jessevdk/go-flags"
@@ -239,4 +240,10 @@ func (cmd *WorkerCommand) baggageclaimRunner(logger lager.Logger) (ifrit.Runner,
 	cmd.Baggageclaim.PrivilegedMode = cmd.Containerd.PrivilegedMode
 
 	return cmd.Baggageclaim.Runner(logger, nil)
+}
+
+// volumeSweeperOpts is empty: the runtimes of this platform keep nothing of
+// their own that follows the worker's volumes.
+func (cmd *WorkerCommand) volumeSweeperOpts() []worker.VolumeSweeperOpt {
+	return nil
 }

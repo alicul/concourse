@@ -161,6 +161,7 @@ func (cmd *WorkerCommand) Runner(args []string) (ifrit.Runner, error) {
 		tsaClient,
 		baggageclaimClient,
 		cmd.VolumeSweeperMaxInFlight,
+		cmd.volumeSweeperOpts()...,
 	)
 
 	var members grouper.Members

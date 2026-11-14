@@ -7,7 +7,6 @@ import (
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/images"
-	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -92,18 +91,34 @@ type client struct {
 	addr           string
 	namespace      string
 	requestTimeout time.Duration
+	imageRetention time.Duration
 
 	containerd *containerd.Client
 }
 
 var _ Client = (*client)(nil)
 
-func New(addr, namespace string, requestTimeout time.Duration) *client {
-	return &client{
+// ClientOpt configures a client.
+type ClientOpt func(*client)
+
+// WithImageRetention sets how long an image created from an image layout
+// stays stored once no volume on the worker holds it any more.
+func WithImageRetention(retention time.Duration) ClientOpt {
+	return func(c *client) {
+		c.imageRetention = retention
+	}
+}
+
+func New(addr, namespace string, requestTimeout time.Duration, opts ...ClientOpt) *client {
+	c := &client{
 		addr:           addr,
 		namespace:      namespace,
 		requestTimeout: requestTimeout,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *client) Init() (err error) {
@@ -155,6 +170,9 @@ func (c *client) NewContainerFromImageLayout(
 ) (
 	containerd.Container, error,
 ) {
+	// found first, while the web node still keeps the container's volume
+	volume, inVolume := volumeOfImageLayout(dir)
+
 	// the lease keeps the imported content and the unpacked layers until the
 	// stored image references them
 	ctx, done, err := c.containerd.WithLease(ctx)
@@ -188,11 +206,11 @@ func (c *client) NewContainerFromImageLayout(
 	defer cancel()
 
 	// containerd keeps the content and unpacked layers of a stored image, so
-	// later containers on this image skip the copy and the unpack. Nothing
-	// removes stored images.
-	_, err = c.containerd.ImageService().Create(ctx, images.Image{Name: target.Digest.String(), Target: target})
-	if err != nil && !errdefs.IsAlreadyExists(err) {
-		return nil, fmt.Errorf("store image %s: %w", target.Digest, err)
+	// later containers on this image skip the copy and the unpack. SweepImages
+	// lets go of it once no volume on the worker holds it any more.
+	err = storeImage(ctx, c.containerd.ImageService(), target, volume, inVolume, c.imageRetention, time.Now())
+	if err != nil {
+		return nil, err
 	}
 
 	cont, err := c.containerd.NewContainer(ctx, id,
@@ -266,4 +284,24 @@ func (c *client) Destroy(ctx context.Context, handle string) error {
 	}
 
 	return container.Delete(ctx)
+}
+
+// SweepImages lets go of the images stored by NewContainerFromImageLayout
+// that no volume on the worker holds any more: it stamps them to expire after
+// the image retention, and removes those whose time has come.
+//
+// It connects to containerd by itself, so that it can be called on a client
+// that no backend has started.
+func (c *client) SweepImages(ctx context.Context) error {
+	if c.containerd == nil {
+		err := c.Init()
+		if err != nil {
+			return err
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
+	defer cancel()
+
+	return sweepImages(ctx, c.containerd.ImageService(), c.imageRetention, time.Now())
 }
