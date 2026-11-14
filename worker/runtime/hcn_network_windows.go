@@ -27,7 +27,8 @@ const (
 
 // ContainerAttacher is implemented by networks that wire containers up at
 // creation time (before the container starts) rather than joining a running
-// task to the network.
+// task to the network, and that take them off the network once their task is
+// deleted.
 type ContainerAttacher interface {
 	AttachContainer(handle string, oci *specs.Spec) error
 	DetachContainer(oci *specs.Spec) error
@@ -159,8 +160,10 @@ func (n *HCNNetwork) AttachContainer(handle string, oci *specs.Spec) error {
 	return nil
 }
 
-// DetachContainer deletes the network namespace AttachContainer created for
-// the spec and the endpoints in it, for a container that was never created.
+// DetachContainer deletes the network namespace that AttachContainer created
+// for the spec, and the endpoints in it. Nothing may be running in the
+// container any more, or it must never have been created: Windows Server
+// 2022 doesn't delete a namespace that is in use.
 func (n *HCNNetwork) DetachContainer(oci *specs.Spec) error {
 	if oci.Windows == nil || oci.Windows.Network == nil {
 		return nil
@@ -217,38 +220,10 @@ func (n *HCNNetwork) Add(ctx context.Context, task containerd.Task, containerHan
 	return nil
 }
 
-// Remove tears down the endpoint and namespace created for the container.
+// Remove is a no-op: the container's task still exists at this point, and
+// with it the container that uses the namespace. DetachContainer takes the
+// container off the network once its task is deleted.
 func (n *HCNNetwork) Remove(ctx context.Context, task containerd.Task, handle string) error {
-	endpoint, err := hcn.GetEndpointByName(endpointName(handle))
-	if err != nil {
-		if hcn.IsNotFoundError(err) {
-			return nil
-		}
-		return fmt.Errorf("get endpoint: %w", err)
-	}
-
-	namespaceID := endpoint.HostComputeNamespace
-
-	err = endpoint.Delete()
-	if err != nil {
-		return fmt.Errorf("delete endpoint: %w", err)
-	}
-
-	if namespaceID != "" {
-		namespace, err := hcn.GetNamespaceByID(namespaceID)
-		if err != nil {
-			if hcn.IsNotFoundError(err) {
-				return nil
-			}
-			return fmt.Errorf("get namespace: %w", err)
-		}
-
-		err = namespace.Delete()
-		if err != nil {
-			return fmt.Errorf("delete namespace: %w", err)
-		}
-	}
-
 	return nil
 }
 

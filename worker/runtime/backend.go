@@ -427,6 +427,11 @@ func (b *GardenBackend) Destroy(handle string) error {
 		// no task, so no process that could still use its IO: see below
 		b.ioManager.Delete(handle)
 
+		err = b.detachContainer(ctx, container)
+		if err != nil {
+			return fmt.Errorf("detach container: %w", err)
+		}
+
 		err = container.Delete(ctx)
 		if err != nil {
 			return fmt.Errorf("deleting container: %w", err)
@@ -461,6 +466,11 @@ func (b *GardenBackend) Destroy(handle string) error {
 	// gone: on Windows this closes the stdio pipes, and the shim doesn't
 	// report the exit of a process whose output it cannot deliver.
 	b.ioManager.Delete(handle)
+
+	err = b.detachContainer(ctx, container)
+	if err != nil {
+		return fmt.Errorf("detach container: %w", err)
+	}
 
 	err = container.Delete(ctx)
 	if err != nil {

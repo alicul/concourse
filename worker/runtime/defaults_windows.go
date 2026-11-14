@@ -52,3 +52,21 @@ func (b *GardenBackend) newContainer(ctx context.Context, handle string, labels 
 
 	return cont, err
 }
+
+// detachContainer deletes the network namespace that newContainer attached to
+// the container, and the endpoint in it. Windows Server 2022 refuses to
+// delete a namespace that a running container still uses, so this has to
+// come after the container's task is deleted.
+func (b *GardenBackend) detachContainer(ctx context.Context, cont containerd.Container) error {
+	attacher, attach := b.network.(ContainerAttacher)
+	if !attach {
+		return nil
+	}
+
+	oci, err := cont.Spec(ctx)
+	if err != nil {
+		return fmt.Errorf("container spec: %w", err)
+	}
+
+	return attacher.DetachContainer(oci)
+}

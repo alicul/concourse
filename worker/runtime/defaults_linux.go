@@ -25,3 +25,9 @@ func defaultTaskOpts() []containerd.NewTaskOpts {
 func (b *GardenBackend) newContainer(ctx context.Context, handle string, labels map[string]string, oci *specs.Spec) (containerd.Container, error) {
 	return b.client.NewContainer(ctx, handle, labels, oci)
 }
+
+// detachContainer does nothing: Network.Remove takes a Linux container off
+// its network while the container's task still exists.
+func (b *GardenBackend) detachContainer(ctx context.Context, cont containerd.Container) error {
+	return nil
+}
