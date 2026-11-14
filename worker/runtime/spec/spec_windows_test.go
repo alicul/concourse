@@ -52,6 +52,38 @@ func TestOciSpec(t *testing.T) {
 	}
 }
 
+func TestOciWindowsResourcesCPUShares(t *testing.T) {
+	for _, tc := range []struct {
+		desc   string
+		limits garden.CPULimits
+		want   uint16
+	}{
+		{desc: "shares within the Windows range are passed on", limits: garden.CPULimits{LimitInShares: 512}, want: 512},
+		{desc: "the largest weight Windows takes is passed on", limits: garden.CPULimits{LimitInShares: 10000}, want: 10000},
+		{desc: "one share beyond the Windows range becomes the largest weight", limits: garden.CPULimits{LimitInShares: 10001}, want: 10000},
+		{desc: "shares far beyond the Windows range become the largest weight", limits: garden.CPULimits{LimitInShares: 20000}, want: 10000},
+		{desc: "shares that do not fit the spec's 16 bits become the largest weight", limits: garden.CPULimits{LimitInShares: 70000}, want: 10000},
+		{desc: "shares that wrap to nothing in 16 bits become the largest weight", limits: garden.CPULimits{LimitInShares: 65536}, want: 10000},
+		{desc: "a weight beyond the Windows range becomes the largest weight", limits: garden.CPULimits{LimitInShares: 512, Weight: 20000}, want: 10000},
+		{desc: "a weight goes before the shares", limits: garden.CPULimits{LimitInShares: 20000, Weight: 256}, want: 256},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			resources := spec.OciWindowsResources(garden.Limits{CPU: tc.limits})
+			if resources == nil || resources.CPU == nil || resources.CPU.Shares == nil {
+				t.Fatalf("expected CPU shares, got: %+v", resources)
+			}
+
+			if *resources.CPU.Shares != tc.want {
+				t.Errorf("unexpected CPU shares: %d, want %d", *resources.CPU.Shares, tc.want)
+			}
+		})
+	}
+
+	if resources := spec.OciWindowsResources(garden.Limits{}); resources != nil {
+		t.Errorf("expected no resources without limits, got: %+v", resources)
+	}
+}
+
 func TestOciSpecEscapedRootfs(t *testing.T) {
 	gdn := garden.ContainerSpec{
 		Handle:     "handle",

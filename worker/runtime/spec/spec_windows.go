@@ -114,6 +114,19 @@ func OciSpecBindMounts(bindMounts []garden.BindMount) (mounts []specs.Mount, err
 	return mounts, nil
 }
 
+// MaxWindowsCPUShares is the largest relative CPU weight that Windows takes
+// for a container. With a larger one the container's compute system is not
+// created at all: "The specified relative processor weight is out of valid
+// range".
+const MaxWindowsCPUShares = 10000
+
+// OciWindowsResources converts the limits of a `garden` container to the
+// resources of a Windows OCI spec. It returns nil when there is no limit.
+//
+// CPU shares are a weight among the containers of one worker, and a Linux
+// worker takes far larger ones than Windows does, so the same task can come
+// with 20000 of them: what is beyond the Windows range becomes the most that
+// Windows can give.
 func OciWindowsResources(limits garden.Limits) *specs.WindowsResources {
 	var (
 		cpuResources    *specs.WindowsCPUResources
@@ -123,6 +136,10 @@ func OciWindowsResources(limits garden.Limits) *specs.WindowsResources {
 	shares := limits.CPU.LimitInShares
 	if limits.CPU.Weight > 0 {
 		shares = limits.CPU.Weight
+	}
+
+	if shares > MaxWindowsCPUShares {
+		shares = MaxWindowsCPUShares
 	}
 
 	if shares > 0 {
