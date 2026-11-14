@@ -457,6 +457,14 @@ func (b *GardenBackend) destroyContainer(ctx context.Context, handle string, con
 			return fmt.Errorf("deleting container: %w", err)
 		}
 
+		// With a task, Network.Remove deletes the files that Create wrote
+		// for the network. They go after the container: one that cannot be
+		// deleted, or that got a task in the meantime, still needs them.
+		err = b.network.RemoveMounts(handle)
+		if err != nil {
+			return fmt.Errorf("network mounts remove: %w", err)
+		}
+
 		return nil
 	}
 

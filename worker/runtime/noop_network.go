@@ -36,6 +36,10 @@ func (NoopNetwork) Remove(ctx context.Context, task containerd.Task, handle stri
 	return nil
 }
 
+func (NoopNetwork) RemoveMounts(handle string) error {
+	return nil
+}
+
 func (NoopNetwork) DropContainerTraffic(containerHandle string) error {
 	return nil
 }

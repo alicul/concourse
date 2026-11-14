@@ -227,6 +227,11 @@ func (n *HCNNetwork) Remove(ctx context.Context, task containerd.Task, handle st
 	return nil
 }
 
+// RemoveMounts is a no-op: SetupMounts prepares nothing on Windows.
+func (n *HCNNetwork) RemoveMounts(handle string) error {
+	return nil
+}
+
 // DropContainerTraffic is not supported on Windows yet; hermetic containers
 // keep their network access.
 func (n *HCNNetwork) DropContainerTraffic(containerHandle string) error {

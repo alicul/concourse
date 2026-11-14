@@ -620,6 +620,19 @@ func (n cniNetwork) Remove(ctx context.Context, task containerd.Task, handle str
 	return nil
 }
 
+func (n cniNetwork) RemoveMounts(handle string) error {
+	if handle == "" {
+		return ErrInvalidInput("empty handle")
+	}
+
+	err := n.store.Delete(handle)
+	if err != nil {
+		return fmt.Errorf("cni network mounts teardown: %w", err)
+	}
+
+	return nil
+}
+
 func netId(task containerd.Task) string {
 	return task.ID()
 }

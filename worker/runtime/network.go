@@ -30,6 +30,12 @@ type Network interface {
 	//
 	Remove(ctx context.Context, task containerd.Task, handle string) (err error)
 
+	// RemoveMounts deletes what SetupMounts prepared for a container. Remove
+	// does that too, but only for a container that has a task: this is for
+	// one that has none, because it never got it or because it is gone.
+	//
+	RemoveMounts(handle string) (err error)
+
 	// Drop all incoming traffic from a container
 	DropContainerTraffic(containerHandle string) (err error)
 

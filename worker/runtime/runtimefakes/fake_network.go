@@ -48,6 +48,17 @@ type FakeNetwork struct {
 	removeReturnsOnCall map[int]struct {
 		result1 error
 	}
+	RemoveMountsStub        func(string) error
+	removeMountsMutex       sync.RWMutex
+	removeMountsArgsForCall []struct {
+		arg1 string
+	}
+	removeMountsReturns struct {
+		result1 error
+	}
+	removeMountsReturnsOnCall map[int]struct {
+		result1 error
+	}
 	ResumeContainerTrafficStub        func(string) error
 	resumeContainerTrafficMutex       sync.RWMutex
 	resumeContainerTrafficArgsForCall []struct {
@@ -270,6 +281,67 @@ func (fake *FakeNetwork) RemoveReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.removeReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeNetwork) RemoveMounts(arg1 string) error {
+	fake.removeMountsMutex.Lock()
+	ret, specificReturn := fake.removeMountsReturnsOnCall[len(fake.removeMountsArgsForCall)]
+	fake.removeMountsArgsForCall = append(fake.removeMountsArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.RemoveMountsStub
+	fakeReturns := fake.removeMountsReturns
+	fake.recordInvocation("RemoveMounts", []interface{}{arg1})
+	fake.removeMountsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeNetwork) RemoveMountsCallCount() int {
+	fake.removeMountsMutex.RLock()
+	defer fake.removeMountsMutex.RUnlock()
+	return len(fake.removeMountsArgsForCall)
+}
+
+func (fake *FakeNetwork) RemoveMountsCalls(stub func(string) error) {
+	fake.removeMountsMutex.Lock()
+	defer fake.removeMountsMutex.Unlock()
+	fake.RemoveMountsStub = stub
+}
+
+func (fake *FakeNetwork) RemoveMountsArgsForCall(i int) string {
+	fake.removeMountsMutex.RLock()
+	defer fake.removeMountsMutex.RUnlock()
+	argsForCall := fake.removeMountsArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeNetwork) RemoveMountsReturns(result1 error) {
+	fake.removeMountsMutex.Lock()
+	defer fake.removeMountsMutex.Unlock()
+	fake.RemoveMountsStub = nil
+	fake.removeMountsReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeNetwork) RemoveMountsReturnsOnCall(i int, result1 error) {
+	fake.removeMountsMutex.Lock()
+	defer fake.removeMountsMutex.Unlock()
+	fake.RemoveMountsStub = nil
+	if fake.removeMountsReturnsOnCall == nil {
+		fake.removeMountsReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.removeMountsReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

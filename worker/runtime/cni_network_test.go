@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -433,6 +434,52 @@ func (s *CNINetworkSuite) TestAdd() {
 func (s *CNINetworkSuite) TestRemoveNilTask() {
 	err := s.network.Remove(context.Background(), nil, "")
 	s.EqualError(err, "nil task")
+}
+
+func (s *CNINetworkSuite) TestRemoveMountsEmptyHandle() {
+	err := s.network.RemoveMounts("")
+	s.EqualError(err, "empty handle")
+}
+
+func (s *CNINetworkSuite) TestRemoveMountsDeletesTheHandleFromTheStore() {
+	err := s.network.RemoveMounts("some-handle")
+	s.NoError(err)
+
+	s.Equal(1, s.store.DeleteCallCount())
+	s.Equal("some-handle", s.store.DeleteArgsForCall(0))
+	s.Equal(0, s.cni.RemoveCallCount())
+}
+
+func (s *CNINetworkSuite) TestRemoveMountsDeletesWhatSetupMountsWrote() {
+	root := s.T().TempDir()
+
+	network, err := runtime.NewCNINetwork(
+		runtime.WithDefaultsForTesting(),
+		runtime.WithCNIFileStore(runtime.NewFileStore(root)),
+		runtime.WithCNIClient(s.cni),
+		runtime.WithIptables(s.iptables),
+		runtime.WithNameServers([]string{"1.2.3.4"}),
+	)
+	s.NoError(err)
+
+	mounts, err := network.SetupMounts("some-handle", false)
+	s.NoError(err)
+	s.NotEmpty(mounts)
+	for _, mount := range mounts {
+		s.FileExists(mount.Source)
+	}
+
+	err = network.RemoveMounts("some-handle")
+	s.NoError(err)
+
+	s.NoDirExists(filepath.Join(root, "some-handle"))
+}
+
+func (s *CNINetworkSuite) TestRemoveMountsStoreErrors() {
+	s.store.DeleteReturns(errors.New("delete-err"))
+
+	err := s.network.RemoveMounts("some-handle")
+	s.EqualError(errors.Unwrap(err), "delete-err")
 }
 
 func (s *CNINetworkSuite) TestRemoveSetupErrors() {

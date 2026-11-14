@@ -168,6 +168,12 @@ func (s *BackendSuite) TestCreateContainerNewTaskFailure() {
 	// sets up, and the web node would find it when it looks the handle up
 	// after the failed create
 	s.Equal(1, fakeContainer.DeleteCallCount())
+
+	// it was never added to the network, whose removal would have deleted
+	// the files that Create wrote for it
+	s.Equal(0, s.network.RemoveCallCount())
+	s.Equal(1, s.network.RemoveMountsCallCount())
+	s.Equal(minimumValidGdnSpec.Handle, s.network.RemoveMountsArgsForCall(0))
 }
 
 func (s *BackendSuite) TestCreateContainerTaskStartFailure() {
@@ -519,6 +525,52 @@ func (s *BackendSuite) TestDestroyGetTaskErrorNotFoundAndDeleteSucceeds() {
 
 	s.Equal(1, fakeContainer.DeleteCallCount())
 	s.NoError(err)
+}
+
+func (s *BackendSuite) TestDestroyRemovesTheNetworkMountsOfAContainerWithoutATask() {
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+
+	s.client.GetContainerReturns(fakeContainer, nil)
+	fakeContainer.TaskReturns(nil, errdefs.ErrNotFound)
+
+	s.network.RemoveMountsStub = func(string) error {
+		s.Equal(1, fakeContainer.DeleteCallCount(), "the container should be deleted before its network mounts")
+		return nil
+	}
+
+	err := s.backend.Destroy("some handle")
+	s.NoError(err)
+
+	s.Equal(1, s.network.RemoveMountsCallCount())
+	s.Equal("some handle", s.network.RemoveMountsArgsForCall(0))
+	s.Equal(0, s.network.RemoveCallCount())
+}
+
+func (s *BackendSuite) TestDestroyKeepsTheNetworkMountsOfAContainerItCouldNotDelete() {
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+
+	s.client.GetContainerReturns(fakeContainer, nil)
+	fakeContainer.TaskReturns(nil, errdefs.ErrNotFound)
+	fakeContainer.DeleteReturns(errors.New("delete-container-failed"))
+
+	err := s.backend.Destroy("some handle")
+	s.Error(err)
+
+	// the container is still there, and a task made in it would mount them
+	s.Equal(0, s.network.RemoveMountsCallCount())
+}
+
+func (s *BackendSuite) TestDestroyReportsNetworkMountsItCouldNotRemove() {
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+
+	s.client.GetContainerReturns(fakeContainer, nil)
+	fakeContainer.TaskReturns(nil, errdefs.ErrNotFound)
+
+	expectedError := errors.New("remove-mounts-failed")
+	s.network.RemoveMountsReturns(expectedError)
+
+	err := s.backend.Destroy("some handle")
+	s.True(errors.Is(err, expectedError))
 }
 
 func (s *BackendSuite) TestDestroyKillTaskFails() {
